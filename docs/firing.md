@@ -98,6 +98,7 @@ Physics and projectile integration must resolve the world and muzzle at the even
 time, or advance the world in matching substeps. Replaying a long update's shots
 against only its final world pose cannot reconstruct intervening movement. The
 library emits logical requests; the game owns aim, recoil presentation, hit
-queries, projectile trajectories and damage application.
+queries and damage application. For finite-speed projectiles, the game can use
+the independent [ballistics module](ballistics.md). The firing range now does so.
 
 See [the runnable example](../examples/Firing.cpp).

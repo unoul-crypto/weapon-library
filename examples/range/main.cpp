@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <cmath>
 #include <vector>
 
 namespace {
@@ -18,29 +19,46 @@ struct KeyPresses {
     bool contains(int key) const { return std::find(keys.begin(), keys.end(), key) != keys.end(); }
 };
 
-int smoke(const char* screenshot) {
+int smoke(const char* screenshot, bool water) {
     weapon_range::RangeSimulation range;
-    range.select_weapon(1);
-    range.set_trigger(true);
-    for (int i = 0; i < 42; ++i) range.advance(1.0 / 120.0);
-    range.set_trigger(false);
-    for (int frame = 0; frame < 4; ++frame) weapon_range::draw_range(range, true);
+    bool okay;
+    if (water) {
+        range.select_weapon(2);
+        range.look(std::atan2(3.0, 32.0), 0.0);
+        range.set_trigger(true);
+        range.set_trigger(false);
+        range.advance(0.3);
+        okay = range.shots() == 1 && range.hits() == 1 && range.water_entries() == 1 &&
+               range.last_flight_seconds() > 0.07 && range.last_impact_speed() < 200.0;
+        range.set_trigger(true);
+        range.set_trigger(false);
+        range.advance(0.055);
+        okay = okay && range.projectiles().size() == 1 &&
+               range.projectiles()[0].motion.state().medium.id == weapon_library::ballistics::Medium::water().id;
+    } else {
+        range.select_weapon(1);
+        range.set_trigger(true);
+        for (int i = 0; i < 42; ++i) range.advance(1.0 / 120.0);
+        range.set_trigger(false);
+        okay = range.shots() == 4 && range.hits() == 4 && range.weapon_state().rounds_remaining == 26;
+    }
+    for (int frame = 0; frame < 4; ++frame) weapon_range::draw_range(range, true, water);
     const auto path = std::filesystem::path(screenshot);
     if (!path.parent_path().empty()) std::filesystem::create_directories(path.parent_path());
     Image image = LoadImageFromScreen();
     const bool exported = ExportImage(image, screenshot);
     UnloadImage(image);
-    const bool okay = exported && range.shots() == 4 && range.hits() == 4 &&
-                      range.weapon_state().rounds_remaining == 26;
-    std::printf("Range smoke: shots=%u hits=%u ammo=%u screenshot=%s\n", range.shots(),
-                range.hits(), range.weapon_state().rounds_remaining, exported ? "saved" : "failed");
-    return okay ? 0 : 1;
+    std::printf("Range smoke (%s): shots=%u hits=%u ammo=%u flight=%.2fms impact=%.2fm/s screenshot=%s\n",
+                water ? "water" : "air", range.shots(), range.hits(), range.weapon_state().rounds_remaining,
+                range.last_flight_seconds() * 1000.0, range.last_impact_speed(), exported ? "saved" : "failed");
+    return okay && exported ? 0 : 1;
 }
 
 } // namespace
 
 int main(int argc, char** argv) {
-    const bool testing = argc >= 2 && std::strcmp(argv[1], "--smoke") == 0;
+    const bool water_test = argc >= 2 && std::strcmp(argv[1], "--smoke-water") == 0;
+    const bool testing = water_test || (argc >= 2 && std::strcmp(argv[1], "--smoke") == 0);
     SetConfigFlags(FLAG_MSAA_4X_HINT | (testing ? FLAG_WINDOW_HIDDEN : FLAG_WINDOW_RESIZABLE));
     InitWindow(1280, 800, "Weapon Library - Firing Range");
     if (!IsWindowReady()) return 1;
@@ -48,15 +66,14 @@ int main(int argc, char** argv) {
     SetExitKey(KEY_NULL);
     SetTargetFPS(120);
     if (testing) {
-        const int result = smoke(argc >= 3 ? argv[2] : "build/qa/range.png");
+        const int result = smoke(argc >= 3 ? argv[2] : "build/qa/range.png", water_test);
         CloseWindow();
         return result;
     }
 
     weapon_range::RangeSimulation range;
-    bool playing = false, armed = false;
+    bool playing = false, armed = false, slow_motion = false;
     double accumulated = 0.0;
-    constexpr double tick = 1.0 / 120.0;
     const auto pause = [&] {
         range.set_trigger(false);
         playing = armed = false;
@@ -87,6 +104,7 @@ int main(int argc, char** argv) {
                 }
             }
             if (pressed.contains(KEY_R)) { range.reset(); changed = true; }
+            if (pressed.contains(KEY_V)) { slow_motion = !slow_motion; accumulated = 0.0; }
             if (changed) armed = false;
             const auto mouse = GetMouseDelta();
             range.look(mouse.x * 0.002, -mouse.y * 0.002);
@@ -95,7 +113,8 @@ int main(int argc, char** argv) {
                 if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) || pressed.contains(KEY_F)) range.set_trigger(true);
                 range.set_trigger(fire_down);
             } else if (!fire_down) armed = true;
-            accumulated += std::min(static_cast<double>(GetFrameTime()), 0.1);
+            accumulated += std::min(static_cast<double>(GetFrameTime()), 0.1) * (slow_motion ? 0.1 : 1.0);
+            const double tick = slow_motion ? 1.0 / 1200.0 : 1.0 / 120.0;
             const double forward = (IsKeyDown(KEY_W) ? 1.0 : 0.0) - (IsKeyDown(KEY_S) ? 1.0 : 0.0);
             const double strafe = (IsKeyDown(KEY_D) ? 1.0 : 0.0) - (IsKeyDown(KEY_A) ? 1.0 : 0.0);
             while (accumulated >= tick) {
@@ -103,7 +122,7 @@ int main(int argc, char** argv) {
                 accumulated -= tick;
             }
         }
-        weapon_range::draw_range(range, playing);
+        weapon_range::draw_range(range, playing, slow_motion);
     }
     EnableCursor();
     CloseWindow();

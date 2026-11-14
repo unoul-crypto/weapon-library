@@ -1,4 +1,4 @@
-# Weapon Library v0.3.0
+# Weapon Library v0.4.1
 
 A small C++17 foundation for reusable weapon mechanics. The core has no external
 dependencies, graphics, physics engine, platform calls or wall-clock access.
@@ -16,10 +16,13 @@ dependencies, graphics, physics engine, platform calls or wall-clock access.
 - Cadence, magazine capacity, configurable ammo cost and dry-fire events.
 - One ordered stream of action transitions and shot events.
 - An optional interactive 3D firing range, with separate game logic and rendering.
+- An independent ballistics module: finite-speed projectiles, gravity, flow-relative
+  air/water resistance, swept queries and medium transitions within an update.
 
 The action core remains usable on its own. `FiringMechanism` composes it with
-trigger, cadence and ammunition rules. Reload transfers, hit detection,
-projectiles and damage are subsequent systems.
+trigger, cadence and ammunition rules. `weapon_library::ballistics` provides
+projectile motion through a game-supplied world adapter. The game owns collision
+geometry and damage; inventory-backed reloading is a subsequent system.
 
 ## Build and test
 
@@ -51,8 +54,21 @@ On Windows, double-click `play-windows.cmd`, or run:
 
 The launcher builds the demo and opens its window. Enter with a click or Enter.
 The scene has three targets, three weapon configurations, hit feedback, short
-tracers, ammo counters, accuracy and scoring. Every shot comes from the library's
-`ShotFiredEvent`.
+projectile trails, ammo counters, accuracy and scoring. Every shot comes from the
+library's `ShotFiredEvent`; hits are counted when its flying projectile impacts.
+The blue region in front of target 03 contains water. The HUD shows flight time,
+impact speed and the number of projectiles still flying.
+
+The result panel distinguishes target, floor, ceiling and wall impacts, and
+expiration. Impact marks remain visible for two simulation seconds; misses also
+label the actual impact point. `PATH: WATER` records whether that projectile
+travelled through water, including impacts after it left the water region.
+
+The water section is six metres thick. With the demo presets, firing horizontally
+at target 03 from the starting position causes pistol and rifle rounds to drop
+to the floor before the target. The heavier turret round reaches it. Select 3 to
+check a registered hit through water; floor impacts are genuine misses and do not
+increase the target hit counter. Use V to inspect the drop.
 
 | Control | Action |
 | --- | --- |
@@ -61,6 +77,7 @@ tracers, ammo counters, accuracy and scoring. Every shot comes from the library'
 | Left mouse / F | Fire; hold for rifle/turret, tap for pistol |
 | 1 / 2 / 3 | Select pistol / rifle / turret firing configuration |
 | R | Reset the entire practice session: ammo, pose, targets and statistics |
+| V | Toggle 0.1x slow motion to inspect trajectories and medium transitions |
 | Escape | Pause and release the mouse |
 | Click / Enter while paused | Resume |
 | Window close button | Quit |
@@ -89,13 +106,18 @@ a screenshot:
 
 ```powershell
 ./build/native/Release/weapon_library_range.exe --smoke build/qa/range.png
+./build/native/Release/weapon_library_range.exe --smoke-water build/qa/water.png
 ```
 
 `examples/range/RangeSimulation` owns movement, room/target hit queries and counters,
 and links only the weapon library. `RangeRenderer` reads this state; `main.cpp`
-owns input, pause and a 120 Hz fixed-step loop. Targets are static; shot queries use
-the pose at the start of each simulation interval. Large-step firing events remain
-available, but moving-world reconstruction is not part of this simple demo.
+owns input, pause and simulation scheduling (120 Hz normally, 1200 Hz in simulation
+time during slow motion). Shot timestamps determine projectile spawn times within
+each update. Targets are static; aim is sampled from input rather than rewound.
+
+See [the ballistics model and adapter contract](docs/ballistics.md), including how
+to link the separate module. Use `WEAPON_LIBRARY_BUILD_BALLISTICS=OFF` to build
+only the action/firing systems without the range.
 
 ## Embed in a game
 
