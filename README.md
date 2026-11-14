@@ -1,0 +1,211 @@
+# Weapon Library v0.3.0
+
+A small C++17 foundation for reusable weapon mechanics. The core has no external
+dependencies, graphics, physics engine, platform calls or wall-clock access.
+
+## Current scope
+
+- Shared immutable weapon definitions and independent runtime instances.
+- Multiple named-by-ID actions per weapon.
+- Windup, active and recovery phases, followed by readiness.
+- Explicit start/cancel commands with rejection reasons.
+- Configurable cancellation permission for each phase.
+- Ordered transition events stamped with simulation time.
+- Read-only state snapshots and headless behavioral tests.
+- A firing mechanism with semi-automatic and automatic trigger modes.
+- Cadence, magazine capacity, configurable ammo cost and dry-fire events.
+- One ordered stream of action transitions and shot events.
+- An optional interactive 3D firing range, with separate game logic and rendering.
+
+The action core remains usable on its own. `FiringMechanism` composes it with
+trigger, cadence and ammunition rules. Reload transfers, hit detection,
+projectiles and damage are subsequent systems.
+
+## Build and test
+
+With CMake and a C++17 toolchain:
+
+```sh
+cmake -S . -B build/native -DWEAPON_LIBRARY_BUILD_TESTS=ON -DWEAPON_LIBRARY_BUILD_EXAMPLES=ON
+cmake --build build/native --config Release
+ctest --test-dir build/native -C Release --output-on-failure
+```
+
+On Windows, the helper also discovers CMake bundled with Visual Studio:
+
+```powershell
+./scripts/build.ps1 -Test
+```
+
+Tests use runtime checks in all build configurations, including Release. The
+headless action example prints activation/completion times. The firing example
+uses the same mechanism for a pistol, a rifle and a turret.
+
+## Play the firing range
+
+On Windows, double-click `play-windows.cmd`, or run:
+
+```powershell
+./scripts/build.ps1 -Demo -Run
+```
+
+The launcher builds the demo and opens its window. Enter with a click or Enter.
+The scene has three targets, three weapon configurations, hit feedback, short
+tracers, ammo counters, accuracy and scoring. Every shot comes from the library's
+`ShotFiredEvent`.
+
+| Control | Action |
+| --- | --- |
+| Mouse | Aim |
+| WASD | Move within the firing area |
+| Left mouse / F | Fire; hold for rifle/turret, tap for pistol |
+| 1 / 2 / 3 | Select pistol / rifle / turret firing configuration |
+| R | Reset the entire practice session: ammo, pose, targets and statistics |
+| Escape | Pause and release the mouse |
+| Click / Enter while paused | Resume |
+| Window close button | Quit |
+
+Switching preserves each magazine and releases the old weapon's trigger. Resume,
+switch and reset require a fresh trigger press, preventing accidental firing.
+Focus loss pauses the simulation and releases the mouse. R is a practice reset;
+the library does not yet implement inventory-backed reloading. The turret preset
+tests automatic firing with a larger magazine; it uses the same handheld demo view.
+
+The demo is OFF by default. Enabling it fetches pinned raylib 5.5; the library and
+headless tests still build without graphics or downloads. To reuse an existing
+raylib 5.5 source checkout, pass `-RaylibSource <directory>` to the helper.
+
+With another native CMake toolchain:
+
+```sh
+cmake -S . -B build/range -DWEAPON_LIBRARY_BUILD_DEMO=ON -DWEAPON_LIBRARY_BUILD_TESTS=ON
+cmake --build build/range --config Release
+ctest --test-dir build/range -C Release --output-on-failure
+```
+
+Run the generated `weapon_library_range` executable. A graphics smoke check with a
+real OpenGL context renders a hidden window, verifies four rifle hits and exports
+a screenshot:
+
+```powershell
+./build/native/Release/weapon_library_range.exe --smoke build/qa/range.png
+```
+
+`examples/range/RangeSimulation` owns movement, room/target hit queries and counters,
+and links only the weapon library. `RangeRenderer` reads this state; `main.cpp`
+owns input, pause and a 120 Hz fixed-step loop. Targets are static; shot queries use
+the pose at the start of each simulation interval. Large-step firing events remain
+available, but moving-world reconstruction is not part of this simple demo.
+
+## Embed in a game
+
+```cmake
+add_subdirectory(path/to/weapon-library)
+target_link_libraries(your_game PRIVATE weapon_library::weapon_library)
+```
+
+Tests and examples default to OFF so embedding does not add executables to the game.
+
+```cpp
+#include <weapon_library/Weapon.h>
+
+using namespace weapon_library;
+
+constexpr ActionId primary_attack = 1;
+auto definition = std::make_shared<const WeaponDefinition>(
+    std::vector<ActionDefinition>{{primary_attack, 0.125, 0.125, 0.25}});
+Weapon weapon(definition);
+
+auto result = weapon.execute(WeaponCommand::start(primary_attack));
+// Consume result.events, including immediate activation for zero windup.
+auto events = weapon.advance(1.0 / 60.0);
+// Consume events and use weapon.state() to construct the presentation snapshot.
+```
+
+See [the complete example](examples/Headless.cpp).
+
+## Firing mechanism
+
+```cpp
+#include <weapon_library/FiringMechanism.h>
+
+using namespace weapon_library;
+
+constexpr ActionId fire = 1;
+auto actions = std::make_shared<const WeaponDefinition>(
+    std::vector<ActionDefinition>{{fire, 0.0, 0.0, 0.05}});
+FiringMechanism rifle(actions, {fire, FireMode::Automatic, 0.1, 30}, 30);
+
+auto immediate = rifle.execute(TriggerCommand::Press); // First shot at t = 0.
+auto continued = rifle.advance(0.5);                  // Shots at 0.1 through 0.5.
+rifle.execute(TriggerCommand::Release);
+
+for (const auto& event : continued) {
+    if (const auto* shot = std::get_if<ShotFiredEvent>(&event)) {
+        // Resolve the muzzle pose at shot->time_seconds and perform the game's shot.
+    }
+}
+```
+
+Consume both command and update events. `ShotFiredEvent` is the authoritative
+request for one shot, with its timestamp, ammo cost and remaining rounds. The
+wrapped active-phase event is a lifecycle notification, not a second shot request.
+
+See the [firing contract](docs/firing.md) and the
+[pistol, rifle and turret example](examples/Firing.cpp).
+
+## Simulation contract
+
+- All durations and time steps are finite nonnegative seconds. Invalid input throws
+  `std::invalid_argument`; invalid time does not change the weapon state.
+- Action IDs are unique within a definition. Zero is a valid ID. Empty definitions
+  are allowed and reject every start command.
+- One action runs at a time. There is no hidden command queue or automatic repeat.
+  Unknown IDs are rejected before checking whether the weapon is busy.
+  The separate firing mechanism implements repeat by starting actions at eligible
+  boundaries; a raw zero-duration `Weapon` action does not enforce firing cadence.
+- Commands take effect at the current weapon clock. The host chooses their order.
+- Starting emits `ActionStarted` in `Windup`; entering `Active` and `Recovery`
+  emits `PhaseEntered`; completion emits `ActionCompleted` in `Ready`.
+  Cancellation emits `ActionCancelled` in `Ready` without a completion event.
+- Zero-length phases emit events immediately, even within `execute()`. A positive
+  time step emits all crossed transitions in order, with their transition times.
+- Event vectors are returned by value and never replayed internally. Consume each
+  vector once. Rejected commands produce no events and preserve the current action.
+- Cancellation defaults to windup only. Enabling recovery cancellation intentionally
+  permits an earlier return to readiness; only enable it when game rules allow it.
+- The clock advances while idle as well. Pause by not calling `advance()`.
+- Use a consistent simulation step. Event times use double precision; equivalent
+  time partitions may differ by floating-point rounding. Bitwise determinism across
+  platforms is not promised. Countdown subtraction compensates accumulated rounding
+  error and treats differences within a few rounding units of the original duration
+  as the same boundary; zero updates never consume positive durations.
+- Instances are single-thread owned. Separate instances can share one immutable
+  definition. Copy state values for presentation; do not mutate simulation in rendering.
+
+## Integration boundaries
+
+The game maps input and AI to commands and synchronizes the weapon clock with its
+simulation. It owns inventory, entities, transforms, physics queries and damage.
+For a raw action, an active-phase event can request an effect or begin a melee hit
+window. For `FiringMechanism`, use `ShotFiredEvent` for the shot. For melee,
+the host must also evaluate the swept path during that window; a single activation
+event does not perform collision detection or deduplicate hits.
+
+Transition timestamps are local simulation seconds, not world snapshots. When a
+large step crosses a whole hit window, the integration must evaluate the matching
+world interval or substep the world. Querying only the final world pose loses motion.
+
+Rendering, animation, sound and UI consume snapshots/events. No animation callback
+is needed for the core timing rules. Engine, storage-library and eventpp adapters
+can be added independently without becoming mandatory core dependencies.
+
+## Next milestones
+
+1. Interruptible reloads, with an explicit inventory transfer contract.
+2. Melee attack instances and per-attack target tracking.
+3. Game adapters for hit queries/projectiles and storage-library, plus integration
+   examples for handheld weapons and a turret using the same firing mechanism.
+
+Keep each milestone driven by a working example. Add interfaces when a concrete
+integration needs them, and keep engine-specific types outside the core.
