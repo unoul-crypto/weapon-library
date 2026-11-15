@@ -12,6 +12,8 @@ void require(bool condition, const char* message) {
 
 void hits_use_library_shots() {
     weapon_range::RangeSimulation range;
+    range.set_aiming(true);
+    range.advance(0.3);
     range.set_trigger(true);
     require(range.hits() == 0 && range.projectiles().size() == 1, "Shot still hits instantly");
     range.advance(0.01);
@@ -25,6 +27,7 @@ void hits_use_library_shots() {
             "Air target impact was not reported correctly");
     range.set_trigger(false);
     range.select_weapon(1);
+    range.advance(0.3);
     range.set_trigger(true);
     range.advance(0.5);
     range.set_trigger(false);
@@ -106,7 +109,8 @@ void water_and_weapon_speed_affect_flight() {
     weapon_range::RangeSimulation moving;
     moving.advance(0.01, 0.0, 1.0);
     moving.set_trigger(true);
-    require(std::abs(moving.projectiles()[0].motion.state().velocity.x - 3.2) < 1e-8,
+    const auto relative_velocity = moving.projectiles()[0].motion.state().velocity - weapon_range::Vec3{3.2, 0, 0};
+    require(std::abs(weapon_library::math::length(relative_velocity) - weapon_range::weapon_specs()[0].muzzle_speed_m_s) < 1e-8,
             "Projectile did not inherit shooter velocity");
 }
 
@@ -152,6 +156,92 @@ void wall_results_and_marker_lifetime() {
             "Marker cleanup erased the last result or retained stale marks");
 }
 
+void aiming_recoil_and_muzzle_are_connected() {
+    weapon_range::RangeSimulation range;
+    const double hip_spread = range.handling_state().spread_half_angle_rad;
+    const auto hip_muzzle = range.weapon_pose().muzzle;
+    range.set_aiming(true);
+    range.advance(0.3);
+    require(range.handling_state().aim_fraction == 1.0 && range.handling_state().spread_half_angle_rad < hip_spread,
+            "Range ADS did not affect the handling module");
+    const auto muzzle = range.weapon_pose().muzzle;
+    require(weapon_library::math::length(muzzle - hip_muzzle) > 0.1, "ADS did not align the weapon pose");
+    range.set_trigger(true);
+    range.set_trigger(false);
+    require(weapon_library::math::length(range.projectiles()[0].motion.state().position - muzzle) < 1e-9 &&
+            weapon_library::math::length(muzzle - range.eye()) > 0.5, "Projectile still spawned at the camera");
+    require(range.handling_state().recoil.pitch_rad > 0 && range.handling_state().bloom_rad > 0 && range.aim().y > 0,
+            "Actual shot did not affect aim and spread");
+    const double recoil = range.handling_state().recoil.pitch_rad;
+    range.select_weapon(1);
+    require(range.handling_state().recoil.pitch_rad == 0 && range.handling_state().bloom_rad == 0,
+            "Weapon switch shared recoil between instances");
+    range.advance(0.1);
+    range.select_weapon(0);
+    require(range.handling_state().recoil.pitch_rad > 0 && range.handling_state().recoil.pitch_rad < recoil,
+            "Weapon switch reset recoil instead of letting it recover");
+    range.reset();
+    require(range.handling_state().aim_fraction == 0 && range.handling_state().bloom_rad == 0 &&
+            range.handling_state().recoil.pitch_rad == 0, "Session reset retained handling state");
+}
+
+void cover_blocks_the_muzzle_even_when_the_eye_sees_above_it() {
+    weapon_range::RangeSimulation range;
+    range.select_weapon(1);
+    range.advance(2.5 / 3.2, 0, 1);
+    range.advance(3.5 / 3.2, 1, 0);
+    range.set_movement(0, 0);
+    require(range.eye().y > weapon_range::firing_cover().max.y &&
+            range.weapon_pose().muzzle.y < weapon_range::firing_cover().max.y,
+            "Cover test did not place the barrel below the visible sight line");
+    range.set_trigger(true);
+    range.set_trigger(false);
+    range.advance(0.05);
+    require(range.last_result().outcome == weapon_range::ShotOutcome::Cover && range.hits() == 0,
+            "A camera-visible target allowed the muzzle to shoot through cover");
+    range.set_aiming(true);
+    range.advance(0.3);
+    const auto muzzle = range.weapon_pose().muzzle;
+    require(muzzle.y > weapon_range::firing_cover().max.y, "ADS did not raise the barrel above cover");
+    range.set_trigger(true);
+    range.set_trigger(false);
+    require(weapon_library::math::length(range.projectiles()[0].motion.state().position - muzzle) < 1e-9,
+            "Clear muzzle was unnecessarily clamped against cover");
+    range.advance(0.01);
+    require(!range.projectiles().empty() && range.projectiles()[0].motion.state().position.z < 0.0,
+            "Raised muzzle failed to clear cover");
+}
+
+void range_handling_preserves_catch_up_timing_and_ignores_dry_fire() {
+    weapon_range::RangeSimulation single, partitioned;
+    for (auto* range : {&single, &partitioned}) {
+        range->select_weapon(1);
+        range->set_aiming(true);
+        range->advance(0.3);
+        range->set_trigger(true);
+    }
+    single.advance(0.5);
+    for (int i = 0; i < 60; ++i) partitioned.advance(1.0 / 120.0);
+    const auto a = single.handling_state(), b = partitioned.handling_state();
+    require(single.shots() == partitioned.shots() && single.shots() == 6 &&
+            std::abs(a.bloom_rad - b.bloom_rad) < 1e-10 &&
+            std::abs(a.recoil.pitch_rad - b.recoil.pitch_rad) < 1e-10 &&
+            single.projectiles().size() == partitioned.projectiles().size(), "Range catch-up changed handling state");
+    for (std::size_t i = 0; i < single.projectiles().size(); ++i) {
+        require(weapon_library::math::length(single.projectiles()[i].motion.state().position -
+                                             partitioned.projectiles()[i].motion.state().position) < 1e-5,
+                "Range catch-up changed the spawned trajectory");
+    }
+    single.advance(4.0);
+    single.set_trigger(false);
+    const auto before = single.handling_state();
+    single.set_trigger(true);
+    const auto after = single.handling_state();
+    require(single.weapon_state().rounds_remaining == 0 && before.bloom_rad == after.bloom_rad &&
+            before.recoil.pitch_rad == after.recoil.pitch_rad && before.recoil.yaw_rad == after.recoil.yaw_rad,
+            "Dry firing created recoil or bloom");
+}
+
 } // namespace
 
 int main() {
@@ -162,7 +252,10 @@ int main() {
         switch_preserves_magazines_and_releases_trigger();
         aim_movement_and_room_bounds();
         water_and_weapon_speed_affect_flight();
-        std::cout << "PASS: Range flight times, spawning, water, hits, switching, reset and bounds\n";
+        aiming_recoil_and_muzzle_are_connected();
+        cover_blocks_the_muzzle_even_when_the_eye_sees_above_it();
+        range_handling_preserves_catch_up_timing_and_ignores_dry_fire();
+        std::cout << "PASS: Range ballistics, handling, cover, firing, switching and reset\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "FAIL: Range: " << error.what() << '\n';

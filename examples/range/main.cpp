@@ -37,6 +37,8 @@ int smoke(const char* screenshot, bool water) {
                range.projectiles()[0].motion.state().medium.id == weapon_library::ballistics::Medium::water().id;
     } else {
         range.select_weapon(1);
+        range.set_aiming(true);
+        range.advance(0.3);
         range.set_trigger(true);
         for (int i = 0; i < 42; ++i) range.advance(1.0 / 120.0);
         range.set_trigger(false);
@@ -76,6 +78,7 @@ int main(int argc, char** argv) {
     double accumulated = 0.0;
     const auto pause = [&] {
         range.set_trigger(false);
+        range.set_aiming(false);
         playing = armed = false;
         accumulated = 0.0;
         EnableCursor();
@@ -107,7 +110,12 @@ int main(int argc, char** argv) {
             if (pressed.contains(KEY_V)) { slow_motion = !slow_motion; accumulated = 0.0; }
             if (changed) armed = false;
             const auto mouse = GetMouseDelta();
-            range.look(mouse.x * 0.002, -mouse.y * 0.002);
+            const double sensitivity = 0.002 * (1.0 - 0.35 * range.handling_state().aim_fraction);
+            range.look(mouse.x * sensitivity, -mouse.y * sensitivity);
+            range.set_aiming(IsMouseButtonDown(MOUSE_BUTTON_RIGHT));
+            const double forward = (IsKeyDown(KEY_W) ? 1.0 : 0.0) - (IsKeyDown(KEY_S) ? 1.0 : 0.0);
+            const double strafe = (IsKeyDown(KEY_D) ? 1.0 : 0.0) - (IsKeyDown(KEY_A) ? 1.0 : 0.0);
+            range.set_movement(forward, strafe);
             if (armed) {
                 // Preserve a short tap even if press and release share a frame.
                 if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) || pressed.contains(KEY_F)) range.set_trigger(true);
@@ -115,8 +123,6 @@ int main(int argc, char** argv) {
             } else if (!fire_down) armed = true;
             accumulated += std::min(static_cast<double>(GetFrameTime()), 0.1) * (slow_motion ? 0.1 : 1.0);
             const double tick = slow_motion ? 1.0 / 1200.0 : 1.0 / 120.0;
-            const double forward = (IsKeyDown(KEY_W) ? 1.0 : 0.0) - (IsKeyDown(KEY_S) ? 1.0 : 0.0);
-            const double strafe = (IsKeyDown(KEY_D) ? 1.0 : 0.0) - (IsKeyDown(KEY_A) ? 1.0 : 0.0);
             while (accumulated >= tick) {
                 range.advance(tick, forward, strafe);
                 accumulated -= tick;

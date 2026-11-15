@@ -100,5 +100,7 @@ against only its final world pose cannot reconstruct intervening movement. The
 library emits logical requests; the game owns aim, recoil presentation, hit
 queries and damage application. For finite-speed projectiles, the game can use
 the independent [ballistics module](ballistics.md). The firing range now does so.
+For aim transitions, seeded spread and recoil, combine firing events with
+[WeaponHandling](handling.md), sampling once at each actual shot time.
 
 See [the runnable example](../examples/Firing.cpp).

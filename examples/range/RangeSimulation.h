@@ -2,6 +2,7 @@
 
 #include <weapon_library/FiringMechanism.h>
 #include <weapon_library/Ballistics.h>
+#include <weapon_library/WeaponHandling.h>
 
 #include <array>
 #include <memory>
@@ -14,6 +15,10 @@ Vec3 view_direction(double yaw, double pitch);
 
 struct WaterVolume { Vec3 min{1.7, 0.0, -25.0}, max{4.3, 3.2, -19.0}; };
 const WaterVolume& water_volume();
+struct SolidBox { Vec3 min{2.0, 0.0, 0.0}, max{4.0, 1.5, 0.8}; };
+const SolidBox& firing_cover();
+
+struct WeaponPose { Vec3 origin, muzzle, forward, right, up; };
 
 struct Target {
     Vec3 center;
@@ -35,7 +40,7 @@ struct RangeProjectile {
     bool passed_water = false;
 };
 
-enum class ShotOutcome { None, Target, Floor, Ceiling, Wall, Expired };
+enum class ShotOutcome { None, Target, Floor, Ceiling, Wall, Cover, Expired };
 
 struct ShotResult {
     ShotOutcome outcome = ShotOutcome::None;
@@ -54,6 +59,7 @@ struct WeaponSpec {
     double muzzle_speed_m_s;
     double mass_kg;
     double cross_section_m2;
+    weapon_library::HandlingDefinition handling;
 };
 
 const std::array<WeaponSpec, 3>& weapon_specs();
@@ -65,11 +71,15 @@ public:
     void reset();
     void select_weapon(unsigned index);
     void set_trigger(bool held);
+    void set_aiming(bool aiming);
+    void set_movement(double forward, double strafe);
     void look(double yaw_delta, double pitch_delta);
     void advance(double seconds, double forward = 0.0, double strafe = 0.0);
 
     Vec3 eye() const noexcept { return eye_; }
-    Vec3 aim() const noexcept { return view_direction(yaw_, pitch_); }
+    Vec3 aim() const;
+    WeaponPose weapon_pose() const;
+    weapon_library::HandlingState handling_state() const;
     double time() const noexcept { return time_; }
     unsigned selected_weapon() const noexcept { return selected_; }
     weapon_library::FiringState weapon_state() const;
@@ -96,8 +106,11 @@ private:
     void shoot(double time, unsigned weapon_index);
     void advance_projectiles(double seconds);
     void move(double seconds);
+    void advance_handling(double seconds);
+    WeaponPose weapon_pose(unsigned weapon_index) const;
 
     std::array<std::unique_ptr<weapon_library::FiringMechanism>, 3> weapons_;
+    std::array<std::unique_ptr<weapon_library::WeaponHandling>, 3> handling_;
     std::array<Target, 3> targets_;
     std::vector<ShotTrace> traces_;
     std::vector<RangeProjectile> projectiles_;
@@ -109,6 +122,7 @@ private:
     unsigned selected_ = 0, shots_ = 0, hits_ = 0, score_ = 0;
     double last_shot_time_ = -10.0, last_hit_time_ = -10.0, last_dry_time_ = -10.0;
     unsigned water_entries_ = 0;
+    bool aiming_ = false;
 };
 
 } // namespace weapon_range

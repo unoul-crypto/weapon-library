@@ -28,6 +28,7 @@ const char* result_label(ShotOutcome outcome) {
     case ShotOutcome::Floor: return "FLOOR HIT";
     case ShotOutcome::Ceiling: return "CEILING HIT";
     case ShotOutcome::Wall: return "WALL HIT";
+    case ShotOutcome::Cover: return "COVER HIT";
     case ShotOutcome::Expired: return "SHOT EXPIRED";
     case ShotOutcome::None: return "RESULT  --";
     }
@@ -70,6 +71,12 @@ void draw_room() {
         DrawLine3D({static_cast<float>(x), 0.008f, 9}, {static_cast<float>(x), 0.008f, -33}, {50, 62, 70, 255});
     }
     cube({0, 0.013f, 0.6f}, {14, 0.014f, 0.08f}, accent);
+    const auto& cover = firing_cover();
+    auto cover_body_max = cover.max;
+    cover_body_max.y -= 0.04;
+    cube(rv((cover.min + cover_body_max) * 0.5), rv(cover_body_max - cover.min), {67, 80, 87, 255});
+    cube(rv({(cover.min.x + cover.max.x) * 0.5, cover.max.y - 0.02, (cover.min.z + cover.max.z) * 0.5}),
+         rv({cover.max.x - cover.min.x, 0.04, cover.max.z - cover.min.z}), {100, 111, 110, 255});
     for (float x : {-5.0f, -1.5f, 1.5f, 5.0f}) {
         cube({x, 0.014f, -15}, {0.025f, 0.015f, 32}, {90, 100, 95, 255});
     }
@@ -136,13 +143,11 @@ void draw_target_labels(const RangeSimulation& range, Camera3D camera) {
 }
 
 void draw_held_weapon(const RangeSimulation& range) {
-    const auto eye = range.eye(), aim = range.aim();
-    const double planar = std::hypot(aim.x, aim.z);
-    const Vec3 right{-aim.z / planar, 0, aim.x / planar};
-    const Vec3 up{-right.z * aim.y, planar, right.x * aim.y};
+    const auto pose = range.weapon_pose();
+    const auto aim = pose.forward, right = pose.right, up = pose.up;
     const double age = range.time() - range.last_shot_time();
     const double kick = age >= 0.0 ? std::exp(-age * 35.0) : 0.0;
-    const Vec3 origin = eye + aim * (0.58 - kick * 0.065) + right * 0.24 + up * (-0.22 + kick * 0.02);
+    const Vec3 origin = pose.origin + aim * (-kick * 0.065) + up * (kick * 0.02);
     // Orient the visual in the view frame, independently of collision and firing rules.
     const float matrix[16] = {
         static_cast<float>(right.x), static_cast<float>(right.y), static_cast<float>(right.z), 0,
@@ -152,12 +157,13 @@ void draw_held_weapon(const RangeSimulation& range) {
     rlPushMatrix();
     rlDisableBackfaceCulling();
     rlMultMatrixf(matrix);
+    rlScalef(static_cast<float>(1.0 - 0.25 * range.handling_state().aim_fraction), 1.0f, 1.0f);
     const bool pistol = range.selected_weapon() == 0;
     cube({0, 0, 0}, {0.11f, 0.1f, pistol ? 0.24f : 0.4f}, {65, 79, 87, 255});
     cube({0, -0.1f, -0.06f}, {0.09f, 0.17f, 0.1f}, {29, 40, 49, 255});
     cube({0, 0.04f, 0.02f}, {0.085f, 0.025f, pistol ? 0.23f : 0.42f}, {108, 127, 135, 255});
     cube({0, 0, pistol ? 0.15f : 0.27f}, {0.055f, 0.055f, pistol ? 0.1f : 0.2f}, {25, 35, 44, 255});
-    cube({0, 0.065f, 0.1f}, {0.018f, 0.023f, 0.018f}, accent);
+    cube({0, 0.06f, 0.1f}, {0.004f, 0.01f, 0.01f}, accent);
     if (!pistol) cube({0, -0.1f, 0.06f}, {0.07f, 0.19f, 0.1f}, {36, 49, 57, 255});
     if (age >= 0 && age < 0.045) {
         DrawSphere({0, 0, pistol ? 0.22f : 0.4f}, 0.05f, {255, 218, 136, 255});
@@ -173,6 +179,16 @@ void draw_hud(const RangeSimulation& range, bool playing, bool slow_motion) {
     DrawRectangle(0, 0, width, 4, accent);
     text("WEAPON LAB", 28, 24, 26, white);
     text("LIVE RANGE  /  " WEAPON_RANGE_VERSION, 29, 55, 15, muted);
+    const auto handling = range.handling_state();
+    DrawRectangle(24, 90, 300, 73, panel);
+    char accuracy[96];
+    constexpr double degrees = 57.29577951308232;
+    std::snprintf(accuracy, sizeof(accuracy), "AIM %03.0f%%   SPREAD %.2f DEG", handling.aim_fraction * 100.0,
+                  handling.spread_half_angle_rad * degrees);
+    text(accuracy, 36, 104, 15, teal);
+    std::snprintf(accuracy, sizeof(accuracy), "RECOIL %.2f / %.2f DEG", handling.recoil.yaw_rad * degrees,
+                  handling.recoil.pitch_rad * degrees);
+    text(accuracy, 36, 134, 15, muted);
     text(playing ? (slow_motion ? "SLOW / 0.1X" : "LIVE / 1.0X") : "PAUSED", width - 186, 28, 18, playing ? teal : accent);
     DrawRectangle(width - 260, 66, 232, 262, panel);
     char buffer[128];
@@ -219,12 +235,16 @@ void draw_hud(const RangeSimulation& range, bool playing, bool slow_motion) {
         centered(weapon_specs()[i].name, x + 53, bottom + 97, 16, selected ? accent : white);
     }
     DrawRectangle(0, height - 34, width, 34, ink);
-    centered("WASD MOVE   MOUSE AIM   LMB / F FIRE   1-3 WEAPON   V SLOW MOTION   R RESET   ESC PAUSE", width / 2, height - 23, width < 1200 ? 12 : 14, muted);
+    centered("WASD MOVE   RMB AIM   LMB / F FIRE   1-3 WEAPON   V SLOW MOTION   R RESET   ESC PAUSE", width / 2, height - 23, width < 1200 ? 12 : 14, muted);
     const int cx = width / 2, cy = height / 2;
     const bool hit = range.time() - range.last_hit_time() < 0.16;
     const Color cross = hit ? accent : teal;
-    DrawLine(cx - 13, cy, cx - 5, cy, cross); DrawLine(cx + 5, cy, cx + 13, cy, cross);
-    DrawLine(cx, cy - 13, cx, cy - 5, cross); DrawLine(cx, cy + 5, cx, cy + 13, cross);
+    const double fov = (65.0 - 20.0 * handling.aim_fraction) / degrees;
+    const float radius = static_cast<float>(height * 0.5 * std::tan(handling.spread_half_angle_rad) / std::tan(fov * 0.5));
+    const int gap = static_cast<int>(std::ceil(std::max(4.0f, radius)));
+    if (radius > 2.0f) DrawCircleLines(cx, cy, radius, Fade(cross, 0.35f));
+    DrawLine(cx - gap - 8, cy, cx - gap, cy, cross); DrawLine(cx + gap, cy, cx + gap + 8, cy, cross);
+    DrawLine(cx, cy - gap - 8, cx, cy - gap, cross); DrawLine(cx, cy + gap, cx, cy + gap + 8, cross);
     DrawCircle(cx, cy, 1.5f, cross);
     if (hit) {
         for (int x : {-1, 1}) for (int y : {-1, 1}) DrawLine(cx + x * 18, cy + y * 18, cx + x * 24, cy + y * 24, accent);
@@ -235,9 +255,9 @@ void draw_hud(const RangeSimulation& range, bool playing, bool slow_motion) {
         DrawRectangle(cx - 244, cy - 144, 488, 272, panel);
         DrawRectangle(cx - 244, cy - 144, 488, 3, accent);
         centered("FIRING RANGE", cx, cy - 108, 34, white);
-        centered("Gravity. Air resistance. Water resistance.", cx, cy - 54, 18, muted);
+        centered("Aim, control recoil and watch the trajectory.", cx, cy - 54, 18, muted);
         centered("Click or press ENTER to enter", cx, cy + 1, 24, accent);
-        centered("Hold the rifle trigger. Tap the pistol trigger.", cx, cy + 53, 17, white);
+        centered("Hold RMB to aim. Fire with LMB or F.", cx, cy + 53, 17, white);
         centered("V slows time. The blue volume is water.", cx, cy + 83, 16, muted);
     }
 }
@@ -249,7 +269,7 @@ void draw_range(const RangeSimulation& range, bool playing, bool slow_motion) {
     camera.position = rv(range.eye());
     camera.target = rv(range.eye() + range.aim());
     camera.up = {0, 1, 0};
-    camera.fovy = 65;
+    camera.fovy = static_cast<float>(65.0 - 20.0 * range.handling_state().aim_fraction);
     camera.projection = CAMERA_PERSPECTIVE;
     BeginDrawing();
     ClearBackground(ink);

@@ -128,3 +128,7 @@ smooth. Gravity, firing cadence and all projectile clocks slow together.
 The simulation subdivides long updates, advances the shooter to each spawn time
 and adds shooter velocity to the launch. Aim is constant during one input update;
 the scene has static targets and does not implement moving-target rewind.
+
+The range also advances [handling](handling.md) to each shot's time. Its sampled
+view ray establishes a sight point, and a solid-tested muzzle provides the actual
+launch origin. This avoids camera-origin shots passing through nearby cover.

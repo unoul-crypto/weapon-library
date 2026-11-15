@@ -1,3 +1,3 @@
 @echo off
-powershell -NoProfile -File "%~dp0scripts\build.ps1" -Demo -Run
+call "%~dp0scripts\build-windows.cmd" --run
 if errorlevel 1 pause

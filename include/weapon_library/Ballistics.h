@@ -1,17 +1,19 @@
 #pragma once
 
+#include <weapon_library/Math.h>
 #include <cstdint>
 #include <optional>
 #include <vector>
 
 namespace weapon_library::ballistics {
 
-struct Vec3 { double x = 0.0, y = 0.0, z = 0.0; };
-Vec3 operator+(Vec3 a, Vec3 b) noexcept;
-Vec3 operator-(Vec3 a, Vec3 b) noexcept;
-Vec3 operator*(Vec3 value, double scale) noexcept;
-double dot(Vec3 a, Vec3 b) noexcept;
-double length(Vec3 value) noexcept;
+// Compatibility aliases; geometry is also usable without the ballistics target.
+using math::Vec3;
+using math::operator+;
+using math::operator-;
+using math::operator*;
+using math::dot;
+using math::length;
 
 struct Medium {
     std::uint32_t id = 0; // Application-defined; presets use 0 for air, 1 for water.

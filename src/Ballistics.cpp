@@ -6,11 +6,6 @@
 
 namespace weapon_library::ballistics {
 
-Vec3 operator+(Vec3 a, Vec3 b) noexcept { return {a.x + b.x, a.y + b.y, a.z + b.z}; }
-Vec3 operator-(Vec3 a, Vec3 b) noexcept { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
-Vec3 operator*(Vec3 v, double s) noexcept { return {v.x * s, v.y * s, v.z * s}; }
-double dot(Vec3 a, Vec3 b) noexcept { return a.x * b.x + a.y * b.y + a.z * b.z; }
-double length(Vec3 v) noexcept { return std::hypot(v.x, v.y, v.z); }
 Medium Medium::air(Vec3 flow) noexcept { return {0, 1.225, flow}; }
 Medium Medium::water(Vec3 flow) noexcept { return {1, 1000.0, flow}; }
 

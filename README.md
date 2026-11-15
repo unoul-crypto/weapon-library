@@ -1,4 +1,4 @@
-# Weapon Library v0.4.1
+# Weapon Library v0.5.0
 
 A small C++17 foundation for reusable weapon mechanics. The core has no external
 dependencies, graphics, physics engine, platform calls or wall-clock access.
@@ -15,6 +15,7 @@ dependencies, graphics, physics engine, platform calls or wall-clock access.
 - A firing mechanism with semi-automatic and automatic trigger modes.
 - Cadence, magazine capacity, configurable ammo cost and dry-fire events.
 - One ordered stream of action transitions and shot events.
+- Independent aiming, seeded spread, shot bloom and accumulating/recovering recoil.
 - An optional interactive 3D firing range, with separate game logic and rendering.
 - An independent ballistics module: finite-speed projectiles, gravity, flow-relative
   air/water resistance, swept queries and medium transitions within an update.
@@ -48,18 +49,26 @@ uses the same mechanism for a pistol, a rifle and a turret.
 
 On Windows, double-click `play-windows.cmd`, or run:
 
-```powershell
-./scripts/build.ps1 -Demo -Run
+```bat
+scripts\build-windows.cmd --run
 ```
 
-The launcher builds the demo and opens its window. Enter with a click or Enter.
+The launcher builds the demo using CMake directly and opens its window. It does
+not run a PowerShell script or change execution policies. Enter with a click or Enter.
 The scene has three targets, three weapon configurations, hit feedback, short
 projectile trails, ammo counters, accuracy and scoring. Every shot comes from the
 library's `ShotFiredEvent`; hits are counted when its flying projectile impacts.
 The blue region in front of target 03 contains water. The HUD shows flight time,
-impact speed and the number of projectiles still flying.
+impact speed and the number of projectiles still flying. Hold RMB to aim: zoom,
+weapon alignment, tighter spread and reduced recoil transition together. The
+spread ring grows while moving/firing and settles while resting. Recoil changes
+the camera's aim; the model also has a separate visual kick.
 
-The result panel distinguishes target, floor, ceiling and wall impacts, and
+The side cover block can obstruct the barrel even when the eye sees the target.
+Projectiles now spawn at the muzzle, with a solid query preventing shots through
+nearby cover. The model and simulation share the weapon pose.
+
+The result panel distinguishes target, floor, ceiling, cover and wall impacts, and
 expiration. Impact marks remain visible for two simulation seconds; misses also
 label the actual impact point. `PATH: WATER` records whether that projectile
 travelled through water, including impacts after it left the water region.
@@ -73,6 +82,7 @@ increase the target hit counter. Use V to inspect the drop.
 | Control | Action |
 | --- | --- |
 | Mouse | Aim |
+| Right mouse | Hold to aim down sights |
 | WASD | Move within the firing area |
 | Left mouse / F | Fire; hold for rifle/turret, tap for pistol |
 | 1 / 2 / 3 | Select pistol / rifle / turret firing configuration |
@@ -117,7 +127,10 @@ each update. Targets are static; aim is sampled from input rather than rewound.
 
 See [the ballistics model and adapter contract](docs/ballistics.md), including how
 to link the separate module. Use `WEAPON_LIBRARY_BUILD_BALLISTICS=OFF` to build
-only the action/firing systems without the range.
+only the action/firing/handling systems without the range.
+
+See [the aiming, spread and recoil contract](docs/handling.md) for independent
+configuration, seeded sampling and integration at each shot's timestamp.
 
 ## Embed in a game
 
