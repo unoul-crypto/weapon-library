@@ -242,6 +242,39 @@ void range_handling_preserves_catch_up_timing_and_ignores_dry_fire() {
             "Dry firing created recoil or bloom");
 }
 
+void reload_preserves_scene_stats_and_ammunition() {
+    weapon_range::RangeSimulation range;
+    const auto reserve = range.reserve_rounds();
+    require(range.request_reload() == weapon_library::ReloadStatus::MagazineFull, "Full scene magazine accepted reload");
+    range.set_trigger(true); range.set_trigger(false);
+    require(range.request_reload() == weapon_library::ReloadStatus::Accepted && range.weapon_state().reload.active,
+            "Scene did not queue reload during shot recovery");
+    range.select_weapon(0);
+    require(range.weapon_state().reload.active, "Selecting the current weapon cancelled reload");
+    range.set_aiming(true);
+    require(!range.handling_state().aiming, "Reload did not lower aiming");
+    range.advance(0.4);
+    require(range.weapon_state().rounds_remaining == 11 && range.reserve_rounds() == reserve && range.shots() == 1,
+            "Reload reset the scene or moved ammo early");
+    range.advance(2.0);
+    require(range.weapon_state().rounds_remaining == 12 && range.reserve_rounds() == reserve - 1 &&
+            range.shots() == 1 && range.hits() == 1 && !range.weapon_state().reload.active,
+            "Reload lost ammo, stats or created extra shots");
+    range.set_trigger(true); range.set_trigger(false);
+    range.request_reload(); range.advance(0.3);
+    range.select_weapon(2); range.advance(3.0); range.select_weapon(0);
+    require(!range.weapon_state().reload.active && range.weapon_state().rounds_remaining == 11 &&
+            range.reserve_rounds() == reserve - 1, "Switching failed to cancel reload without spending reserve");
+    range.request_reload(); range.advance(0.3);
+    require(range.cancel_reload() == weapon_library::ReloadStatus::Accepted, "Scene reload cancellation failed");
+    range.advance(2.0);
+    require(range.weapon_state().rounds_remaining == 11 && range.reserve_rounds() == reserve - 1,
+            "Cancelled scene reload completed later");
+    range.reset();
+    require(range.weapon_state().rounds_remaining == 12 && range.reserve_rounds() == reserve &&
+            !range.weapon_state().reload.active && range.shots() == 0, "Reset retained reload state");
+}
+
 } // namespace
 
 int main() {
@@ -255,6 +288,7 @@ int main() {
         aiming_recoil_and_muzzle_are_connected();
         cover_blocks_the_muzzle_even_when_the_eye_sees_above_it();
         range_handling_preserves_catch_up_timing_and_ignores_dry_fire();
+        reload_preserves_scene_stats_and_ammunition();
         std::cout << "PASS: Range ballistics, handling, cover, firing, switching and reset\n";
         return 0;
     } catch (const std::exception& error) {

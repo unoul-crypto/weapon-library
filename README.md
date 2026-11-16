@@ -1,4 +1,4 @@
-# Weapon Library v0.5.0
+# Weapon Library v0.6.0
 
 A small C++17 foundation for reusable weapon mechanics. The core has no external
 dependencies, graphics, physics engine, platform calls or wall-clock access.
@@ -16,6 +16,7 @@ dependencies, graphics, physics engine, platform calls or wall-clock access.
 - Cadence, magazine capacity, configurable ammo cost and dry-fire events.
 - One ordered stream of action transitions and shot events.
 - Independent aiming, seeded spread, shot bloom and accumulating/recovering recoil.
+- Interruptible reload actions, finite reserves and an atomic ammunition-source contract.
 - An optional interactive 3D firing range, with separate game logic and rendering.
 - An independent ballistics module: finite-speed projectiles, gravity, flow-relative
   air/water resistance, swept queries and medium transitions within an update.
@@ -23,7 +24,7 @@ dependencies, graphics, physics engine, platform calls or wall-clock access.
 The action core remains usable on its own. `FiringMechanism` composes it with
 trigger, cadence and ammunition rules. `weapon_library::ballistics` provides
 projectile motion through a game-supplied world adapter. The game owns collision
-geometry and damage; inventory-backed reloading is a subsequent system.
+geometry and damage; inventory-backed reloading connects through `AmmunitionSource`.
 
 ## Build and test
 
@@ -86,7 +87,9 @@ increase the target hit counter. Use V to inspect the drop.
 | WASD | Move within the firing area |
 | Left mouse / F | Fire; hold for rifle/turret, tap for pistol |
 | 1 / 2 / 3 | Select pistol / rifle / turret firing configuration |
-| R | Reset the entire practice session: ammo, pose, targets and statistics |
+| R | Reload from this weapon's reserve |
+| Q | Cancel reload without spending reserve ammo |
+| Home | Reset the entire practice session: ammo, reserves, pose, targets and statistics |
 | V | Toggle 0.1x slow motion to inspect trajectories and medium transitions |
 | Escape | Pause and release the mouse |
 | Click / Enter while paused | Resume |
@@ -94,8 +97,9 @@ increase the target hit counter. Use V to inspect the drop.
 
 Switching preserves each magazine and releases the old weapon's trigger. Resume,
 switch and reset require a fresh trigger press, preventing accidental firing.
-Focus loss pauses the simulation and releases the mouse. R is a practice reset;
-the library does not yet implement inventory-backed reloading. The turret preset
+Focus loss pauses the simulation and releases the mouse. Reload transfers happen
+only on completion; switching cancels reload and preserves loaded/reserve rounds.
+The HUD shows reserve ammo and reload progress. The turret preset
 tests automatic firing with a larger magazine; it uses the same handheld demo view.
 
 The demo is OFF by default. Enabling it fetches pinned raylib 5.5; the library and
@@ -117,6 +121,7 @@ a screenshot:
 ```powershell
 ./build/native/Release/weapon_library_range.exe --smoke build/qa/range.png
 ./build/native/Release/weapon_library_range.exe --smoke-water build/qa/water.png
+./build/native/Release/weapon_library_range.exe --smoke-reload build/qa/reload.png
 ```
 
 `examples/range/RangeSimulation` owns movement, room/target hit queries and counters,
@@ -237,10 +242,12 @@ can be added independently without becoming mandatory core dependencies.
 
 ## Next milestones
 
-1. Interruptible reloads, with an explicit inventory transfer contract.
-2. Melee attack instances and per-attack target tracking.
-3. Game adapters for hit queries/projectiles and storage-library, plus integration
+1. Melee attack instances and per-attack target tracking.
+2. Game adapters for hit queries/projectiles and storage-library, plus integration
    examples for handheld weapons and a turret using the same firing mechanism.
 
 Keep each milestone driven by a working example. Add interfaces when a concrete
 integration needs them, and keep engine-specific types outside the core.
+
+See [reloading and ammunition sources](docs/reloading.md) for configuration,
+completion-only transfers, interruption and inventory integration.

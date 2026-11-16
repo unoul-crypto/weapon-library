@@ -1,6 +1,7 @@
 #pragma once
 
 #include <weapon_library/Weapon.h>
+#include <weapon_library/Ammunition.h>
 
 #include <variant>
 
@@ -15,6 +16,7 @@ struct FiringDefinition {
     double shot_interval_seconds = 0.1;
     std::uint32_t magazine_capacity = 1;
     std::uint32_t rounds_per_shot = 1;
+    std::optional<ActionId> reload_action_id; // Must differ from the firing action.
 };
 
 enum class TriggerCommand { Press, Release };
@@ -31,14 +33,43 @@ struct DryFireEvent {
     double time_seconds;
 };
 
+enum class ReloadEventType { Started, Completed, Cancelled };
+
+struct ReloadEvent {
+    ReloadEventType type;
+    double time_seconds;
+    std::uint32_t rounds_transferred = 0;
+    std::uint32_t rounds_remaining = 0;
+};
+
+enum class ReloadStatus {
+    Accepted, Unsupported, Busy, MagazineFull, NoAmmunition, NoSource,
+    NotReloading, CancellationBlocked
+};
+
+struct ReloadState {
+    bool active = false; // Includes a request waiting for the current shot to finish.
+    bool waiting_for_action = false;
+    double duration_seconds = 0.0;
+    double remaining_seconds = 0.0;
+};
+
 // One ordered stream: activation precedes its shot, which precedes recovery.
-using FiringEvent = std::variant<WeaponEvent, ShotFiredEvent, DryFireEvent>;
+using FiringEvent = std::variant<WeaponEvent, ShotFiredEvent, DryFireEvent, ReloadEvent>;
 
 struct FiringState {
     WeaponState weapon;
     bool trigger_held;
     std::uint32_t rounds_remaining;
     double cooldown_remaining_seconds;
+    ReloadState reload;
+    bool requires_trigger_release = false;
+};
+
+struct ReloadCommandResult {
+    ReloadStatus status;
+    std::vector<FiringEvent> events;
+    bool accepted() const noexcept { return status == ReloadStatus::Accepted; }
 };
 
 struct FiringCancelResult {
@@ -66,11 +97,16 @@ public:
     std::vector<FiringEvent> advance(double seconds);
     // An accepted cancellation releases the trigger; blocked cancellation changes nothing.
     FiringCancelResult cancel_action();
+    // May wait for the committed shot/recovery. Source stays owned until completion
+    // or cancellation. No rounds are removed until the reload action completes.
+    ReloadCommandResult request_reload(std::shared_ptr<AmmunitionSource> source);
+    ReloadCommandResult cancel_reload();
 
 private:
     void try_start(std::vector<FiringEvent>& events);
     void append_events(const std::vector<WeaponEvent>& events,
                        std::vector<FiringEvent>& output);
+    void begin_reload_if_ready(std::vector<FiringEvent>& events);
 
     Weapon weapon_;
     const FiringDefinition definition_;
@@ -79,6 +115,10 @@ private:
     std::uint32_t rounds_remaining_;
     double cooldown_remaining_ = 0.0;
     double cooldown_rounding_error_ = 0.0;
+    std::shared_ptr<AmmunitionSource> reload_source_;
+    bool reload_running_ = false;
+    bool requires_trigger_release_ = false;
+    std::optional<std::size_t> reload_action_index_;
 };
 
 } // namespace weapon_library

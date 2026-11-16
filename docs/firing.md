@@ -63,9 +63,9 @@ trigger press. Holding an empty automatic trigger does not spam events. Dry fire
 does not start an action, spend ammo or start a cooldown. If a magazine has fewer
 rounds than the configured shot cost, the unusable remainder is preserved.
 
-This release models loaded ammo and consumption. Loading, reserve storage and
-inventory transactions belong to the next reload milestone; there is no mutable
-ammo setter or implicit infinite reserve.
+Optional reload actions now top up loaded ammo from an `AmmunitionSource`, with
+transfer only at completion. See [the reload contract](reloading.md). There is no
+mutable loaded-ammo setter or implicit infinite reserve.
 
 ## Events and integration
 
@@ -77,6 +77,7 @@ one of:
 | `WeaponEvent` | Existing action lifecycle transitions |
 | `ShotFiredEvent` | One shot request with action ID, time, cost and remaining rounds |
 | `DryFireEvent` | One eligible attempt with insufficient rounds |
+| `ReloadEvent` | Reload start, completion/transfer, or cancellation |
 
 At activation, `PhaseEntered(Active)` precedes `ShotFiredEvent`. Recovery and
 completion follow. Even completely instant actions preserve this order. Use

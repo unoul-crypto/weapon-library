@@ -157,6 +157,14 @@ void draw_held_weapon(const RangeSimulation& range) {
     rlPushMatrix();
     rlDisableBackfaceCulling();
     rlMultMatrixf(matrix);
+    const auto reload = range.weapon_state().reload;
+    if (reload.active) {
+        const double progress = reload.waiting_for_action || reload.duration_seconds == 0.0 ? 0.0 :
+                                std::clamp(1.0 - reload.remaining_seconds / reload.duration_seconds, 0.0, 1.0);
+        const float motion = static_cast<float>(std::sin(progress * 3.141592653589793));
+        rlTranslatef(0, -0.14f * motion, -0.1f * motion);
+        rlRotatef(25.0f * motion, 0, 0, 1);
+    }
     rlScalef(static_cast<float>(1.0 - 0.25 * range.handling_state().aim_fraction), 1.0f, 1.0f);
     const bool pistol = range.selected_weapon() == 0;
     cube({0, 0, 0}, {0.11f, 0.1f, pistol ? 0.24f : 0.4f}, {65, 79, 87, 255});
@@ -213,8 +221,8 @@ void draw_hud(const RangeSimulation& range, bool playing, bool slow_motion) {
         text(result.passed_water ? "PATH: WATER" : "PATH: AIR", width - 246, 295, 15, muted);
     }
 
-    const int bottom = height - 172;
-    DrawRectangle(24, bottom, 276, 122, panel);
+    const int bottom = height - 195;
+    DrawRectangle(24, bottom, 310, 145, panel);
     text(spec.name, 40, bottom + 12, 21, white);
     std::snprintf(buffer, sizeof(buffer), "%02u", state.rounds_remaining);
     text(buffer, 40, bottom + 39, 42, state.rounds_remaining ? white : accent);
@@ -224,18 +232,37 @@ void draw_hud(const RangeSimulation& range, bool playing, bool slow_motion) {
     std::snprintf(buffer, sizeof(buffer), "%03.0f RPM", 60.0 / spec.interval_seconds);
     text(buffer, 172, bottom + 68, 15, muted);
     std::snprintf(buffer, sizeof(buffer), "MUZZLE  %.0f M/S", spec.muzzle_speed_m_s);
-    text(buffer, 40, bottom + 98, 15, muted);
+    text(buffer, 40, bottom + 121, 15, muted);
+    std::snprintf(buffer, sizeof(buffer), "RESERVE  %03u", range.reserve_rounds());
+    text(buffer, 40, bottom + 98, 16, teal);
+    if (state.reload.active) {
+        DrawRectangle(24, bottom - 45, 310, 37, panel);
+        const double progress = state.reload.waiting_for_action || state.reload.duration_seconds == 0.0 ? 0.0 :
+            std::clamp(1.0 - state.reload.remaining_seconds / state.reload.duration_seconds, 0.0, 1.0);
+        std::snprintf(buffer, sizeof(buffer), "RELOADING  %03.0f%%  /  Q CANCEL", progress * 100.0);
+        text(state.reload.waiting_for_action ? "FINISHING SHOT..." : buffer, 36, bottom - 35, 16, accent);
+        DrawRectangle(24, bottom - 11, static_cast<int>(310 * progress), 3, accent);
+    } else if (range.time() - range.last_reload_notice_time() < 1.5) {
+        const char* notice = nullptr;
+        switch (range.last_reload_status()) {
+        case weapon_library::ReloadStatus::MagazineFull: notice = "MAGAZINE FULL"; break;
+        case weapon_library::ReloadStatus::NoAmmunition: notice = "NO RESERVE AMMO"; break;
+        case weapon_library::ReloadStatus::CancellationBlocked: notice = "CANNOT CANCEL YET"; break;
+        default: break;
+        }
+        if (notice) text(notice, 36, bottom - 30, 18, accent);
+    }
     for (unsigned i = 0; i < weapon_specs().size(); ++i) {
         const int x = width - 368 + static_cast<int>(i) * 114;
         const bool selected = i == range.selected_weapon();
-        DrawRectangle(x, bottom + 66, 106, 56, selected ? Color{71, 62, 46, 245} : panel);
-        if (selected) DrawRectangle(x, bottom + 66, 106, 2, accent);
+        DrawRectangle(x, bottom + 89, 106, 56, selected ? Color{71, 62, 46, 245} : panel);
+        if (selected) DrawRectangle(x, bottom + 89, 106, 2, accent);
         std::snprintf(buffer, sizeof(buffer), "%u", i + 1);
-        text(buffer, x + 10, bottom + 73, 14, muted);
-        centered(weapon_specs()[i].name, x + 53, bottom + 97, 16, selected ? accent : white);
+        text(buffer, x + 10, bottom + 96, 14, muted);
+        centered(weapon_specs()[i].name, x + 53, bottom + 120, 16, selected ? accent : white);
     }
     DrawRectangle(0, height - 34, width, 34, ink);
-    centered("WASD MOVE   RMB AIM   LMB / F FIRE   1-3 WEAPON   V SLOW MOTION   R RESET   ESC PAUSE", width / 2, height - 23, width < 1200 ? 12 : 14, muted);
+    centered("WASD MOVE  RMB AIM  LMB/F FIRE  R RELOAD  Q CANCEL  1-3 WEAPON  V SLOW  HOME RESET  ESC PAUSE", width / 2, height - 23, width < 1200 ? 12 : 14, muted);
     const int cx = width / 2, cy = height / 2;
     const bool hit = range.time() - range.last_hit_time() < 0.16;
     const Color cross = hit ? accent : teal;
@@ -249,7 +276,8 @@ void draw_hud(const RangeSimulation& range, bool playing, bool slow_motion) {
     if (hit) {
         for (int x : {-1, 1}) for (int y : {-1, 1}) DrawLine(cx + x * 18, cy + y * 18, cx + x * 24, cy + y * 24, accent);
     }
-    if (range.time() - range.last_dry_time() < 0.9) centered("EMPTY  /  R TO RESET SESSION", cx, cy + 48, 18, accent);
+    if (!state.reload.active && range.time() - range.last_dry_time() < 0.9)
+        centered("EMPTY  /  R TO RELOAD", cx, cy + 48, 18, accent);
     if (!playing) {
         DrawRectangle(0, 0, width, height, {6, 13, 20, 195});
         DrawRectangle(cx - 244, cy - 144, 488, 272, panel);
@@ -259,6 +287,7 @@ void draw_hud(const RangeSimulation& range, bool playing, bool slow_motion) {
         centered("Click or press ENTER to enter", cx, cy + 1, 24, accent);
         centered("Hold RMB to aim. Fire with LMB or F.", cx, cy + 53, 17, white);
         centered("V slows time. The blue volume is water.", cx, cy + 83, 16, muted);
+        centered("R reloads. Q cancels. Home resets the session.", cx, cy + 108, 15, muted);
     }
 }
 

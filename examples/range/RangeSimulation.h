@@ -60,6 +60,8 @@ struct WeaponSpec {
     double mass_kg;
     double cross_section_m2;
     weapon_library::HandlingDefinition handling;
+    unsigned reserve_rounds = 0;
+    double reload_seconds = 1.5;
 };
 
 const std::array<WeaponSpec, 3>& weapon_specs();
@@ -71,6 +73,8 @@ public:
     void reset();
     void select_weapon(unsigned index);
     void set_trigger(bool held);
+    weapon_library::ReloadStatus request_reload();
+    weapon_library::ReloadStatus cancel_reload();
     void set_aiming(bool aiming);
     void set_movement(double forward, double strafe);
     void look(double yaw_delta, double pitch_delta);
@@ -83,6 +87,9 @@ public:
     double time() const noexcept { return time_; }
     unsigned selected_weapon() const noexcept { return selected_; }
     weapon_library::FiringState weapon_state() const;
+    unsigned reserve_rounds() const noexcept { return reserves_[selected_]->available_rounds(); }
+    weapon_library::ReloadStatus last_reload_status() const noexcept { return last_reload_status_; }
+    double last_reload_notice_time() const noexcept { return last_reload_notice_time_; }
     const std::array<Target, 3>& targets() const noexcept { return targets_; }
     const std::vector<ShotTrace>& traces() const noexcept { return traces_; }
     const std::vector<RangeProjectile>& projectiles() const noexcept { return projectiles_; }
@@ -111,6 +118,7 @@ private:
 
     std::array<std::unique_ptr<weapon_library::FiringMechanism>, 3> weapons_;
     std::array<std::unique_ptr<weapon_library::WeaponHandling>, 3> handling_;
+    std::array<std::shared_ptr<weapon_library::AmmunitionReserve>, 3> reserves_;
     std::array<Target, 3> targets_;
     std::vector<ShotTrace> traces_;
     std::vector<RangeProjectile> projectiles_;
@@ -123,6 +131,8 @@ private:
     double last_shot_time_ = -10.0, last_hit_time_ = -10.0, last_dry_time_ = -10.0;
     unsigned water_entries_ = 0;
     bool aiming_ = false;
+    weapon_library::ReloadStatus last_reload_status_ = weapon_library::ReloadStatus::Accepted;
+    double last_reload_notice_time_ = -10.0;
 };
 
 } // namespace weapon_range

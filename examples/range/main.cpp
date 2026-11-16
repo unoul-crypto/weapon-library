@@ -19,10 +19,19 @@ struct KeyPresses {
     bool contains(int key) const { return std::find(keys.begin(), keys.end(), key) != keys.end(); }
 };
 
-int smoke(const char* screenshot, bool water) {
+int smoke(const char* screenshot, bool water, bool reload) {
     weapon_range::RangeSimulation range;
     bool okay;
-    if (water) {
+    if (reload) {
+        range.select_weapon(1);
+        range.set_trigger(true);
+        range.advance(0.25);
+        range.set_trigger(false);
+        okay = range.request_reload() == weapon_library::ReloadStatus::Accepted;
+        range.advance(0.9);
+        okay = okay && range.weapon_state().reload.active && !range.weapon_state().reload.waiting_for_action &&
+               range.weapon_state().rounds_remaining == 27 && range.reserve_rounds() == 150;
+    } else if (water) {
         range.select_weapon(2);
         range.look(std::atan2(3.0, 32.0), 0.0);
         range.set_trigger(true);
@@ -50,8 +59,13 @@ int smoke(const char* screenshot, bool water) {
     Image image = LoadImageFromScreen();
     const bool exported = ExportImage(image, screenshot);
     UnloadImage(image);
+    if (reload) {
+        range.advance(1.0);
+        okay = okay && !range.weapon_state().reload.active && range.weapon_state().rounds_remaining == 30 &&
+               range.reserve_rounds() == 147 && range.shots() == 3;
+    }
     std::printf("Range smoke (%s): shots=%u hits=%u ammo=%u flight=%.2fms impact=%.2fm/s screenshot=%s\n",
-                water ? "water" : "air", range.shots(), range.hits(), range.weapon_state().rounds_remaining,
+                reload ? "reload" : water ? "water" : "air", range.shots(), range.hits(), range.weapon_state().rounds_remaining,
                 range.last_flight_seconds() * 1000.0, range.last_impact_speed(), exported ? "saved" : "failed");
     return okay && exported ? 0 : 1;
 }
@@ -60,7 +74,8 @@ int smoke(const char* screenshot, bool water) {
 
 int main(int argc, char** argv) {
     const bool water_test = argc >= 2 && std::strcmp(argv[1], "--smoke-water") == 0;
-    const bool testing = water_test || (argc >= 2 && std::strcmp(argv[1], "--smoke") == 0);
+    const bool reload_test = argc >= 2 && std::strcmp(argv[1], "--smoke-reload") == 0;
+    const bool testing = water_test || reload_test || (argc >= 2 && std::strcmp(argv[1], "--smoke") == 0);
     SetConfigFlags(FLAG_MSAA_4X_HINT | (testing ? FLAG_WINDOW_HIDDEN : FLAG_WINDOW_RESIZABLE));
     InitWindow(1280, 800, "Weapon Library - Firing Range");
     if (!IsWindowReady()) return 1;
@@ -68,7 +83,7 @@ int main(int argc, char** argv) {
     SetExitKey(KEY_NULL);
     SetTargetFPS(120);
     if (testing) {
-        const int result = smoke(argc >= 3 ? argv[2] : "build/qa/range.png", water_test);
+        const int result = smoke(argc >= 3 ? argv[2] : "build/qa/range.png", water_test, reload_test);
         CloseWindow();
         return result;
     }
@@ -106,7 +121,13 @@ int main(int argc, char** argv) {
                     changed = true;
                 }
             }
-            if (pressed.contains(KEY_R)) { range.reset(); changed = true; }
+            if (pressed.contains(KEY_HOME)) { range.reset(); changed = true; }
+            if (pressed.contains(KEY_R)) {
+                if (range.request_reload() == weapon_library::ReloadStatus::Accepted) changed = true;
+            }
+            if (pressed.contains(KEY_Q)) {
+                if (range.cancel_reload() == weapon_library::ReloadStatus::Accepted) changed = true;
+            }
             if (pressed.contains(KEY_V)) { slow_motion = !slow_motion; accumulated = 0.0; }
             if (changed) armed = false;
             const auto mouse = GetMouseDelta();

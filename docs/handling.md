@@ -89,8 +89,9 @@ FOV; movement and repeated shots enlarge it. Camera direction follows the physic
 recoil center. Model kick is a separate cosmetic translation.
 
 Each weapon retains its own seeded handling state. Switching releases the previous
-trigger and its aim request, while recoil and bloom keep recovering. R resets the
-session, including the random sequences. Pause/focus loss release firing and aiming.
+trigger and its aim request, while recoil and bloom keep recovering. Home resets
+the session, including random sequences. R reloads and Q cancels reload; no reload
+phase samples a shot or adds recoil/bloom. Pause/focus loss release firing and aiming.
 
 The game queries the sampled view ray for a convergence point, then launches from
 the muzzle toward it. A separate eye-to-muzzle solid query keeps a barrel inside

@@ -106,17 +106,23 @@ const std::array<WeaponSpec, 3>& weapon_specs() {
         }};
         values[0].handling.recoil_per_shot.pitch_rad = 0.012;
         values[0].handling.bloom_per_shot_rad = 0.004;
+        values[0].reserve_rounds = 60;
+        values[0].reload_seconds = 1.2;
         values[1].handling.hip_spread_rad = 0.025;
         values[1].handling.recoil_per_shot.pitch_rad = 0.006;
         values[1].handling.recoil_yaw_jitter_rad = 0.0025;
         values[1].handling.bloom_per_shot_rad = 0.0022;
         values[1].handling.recoil_return_rate = 5.0;
+        values[1].reserve_rounds = 150;
+        values[1].reload_seconds = 1.8;
         values[2].handling.hip_spread_rad = 0.014;
         values[2].handling.aimed_spread_rad = 0.0015;
         values[2].handling.recoil_per_shot.pitch_rad = 0.004;
         values[2].handling.recoil_yaw_jitter_rad = 0.001;
         values[2].handling.bloom_per_shot_rad = 0.0015;
         values[2].handling.recoil_return_rate = 4.0;
+        values[2].reserve_rounds = 180;
+        values[2].reload_seconds = 2.4;
         return values;
     }();
     return specs;
@@ -126,13 +132,14 @@ RangeSimulation::RangeSimulation() { reset(); }
 
 void RangeSimulation::reset() {
     using namespace weapon_library;
-    const auto actions = std::make_shared<const WeaponDefinition>(
-        std::vector<ActionDefinition>{{1, 0.0, 0.0, 0.045}});
     for (std::size_t i = 0; i < weapons_.size(); ++i) {
         const auto& spec = weapon_specs()[i];
+        const auto actions = std::make_shared<const WeaponDefinition>(std::vector<ActionDefinition>{
+            {1, 0.0, 0.0, 0.045}, {2, spec.reload_seconds, 0.0, 0.0, {true, true, true}}});
         weapons_[i] = std::make_unique<FiringMechanism>(
-            actions, FiringDefinition{1, spec.mode, spec.interval_seconds, spec.capacity}, spec.capacity);
+            actions, FiringDefinition{1, spec.mode, spec.interval_seconds, spec.capacity, 1, 2}, spec.capacity);
         handling_[i] = std::make_unique<WeaponHandling>(spec.handling, 0x92d68ca2u + static_cast<std::uint32_t>(i) * 7919u);
+        reserves_[i] = std::make_shared<AmmunitionReserve>(spec.reserve_rounds);
     }
     targets_ = {{{{-3.0, 1.65, -9.0}}, {{0.0, 1.65, -17.0}}, {{3.0, 1.65, -27.0}}}};
     traces_.clear();
@@ -146,21 +153,46 @@ void RangeSimulation::reset() {
     last_shot_time_ = last_hit_time_ = last_dry_time_ = -10.0;
     water_entries_ = 0;
     aiming_ = false;
+    last_reload_status_ = ReloadStatus::Accepted;
+    last_reload_notice_time_ = -10.0;
 }
 
 void RangeSimulation::select_weapon(unsigned index) {
     if (index >= weapons_.size()) {
         throw std::invalid_argument("Unknown range weapon");
     }
+    if (index == selected_) return;
     set_trigger(false);
+    if (weapons_[selected_]->state().reload.active) cancel_reload();
     handling_[selected_]->set_aiming(false);
     selected_ = index;
-    handling_[selected_]->set_aiming(aiming_);
+    handling_[selected_]->set_aiming(aiming_ && !weapons_[selected_]->state().reload.active);
+    last_reload_notice_time_ = -10.0;
 }
 
 void RangeSimulation::set_aiming(bool aiming) {
     aiming_ = aiming;
-    handling_[selected_]->set_aiming(aiming);
+    handling_[selected_]->set_aiming(aiming && !weapons_[selected_]->state().reload.active);
+}
+
+weapon_library::ReloadStatus RangeSimulation::request_reload() {
+    const auto result = weapons_[selected_]->request_reload(reserves_[selected_]);
+    consume(result.events, selected_);
+    if (result.accepted()) {
+        set_trigger(false);
+        handling_[selected_]->set_aiming(false);
+    }
+    last_reload_status_ = result.status;
+    last_reload_notice_time_ = time_;
+    return result.status;
+}
+
+weapon_library::ReloadStatus RangeSimulation::cancel_reload() {
+    const auto result = weapons_[selected_]->cancel_reload();
+    consume(result.events, selected_);
+    last_reload_status_ = result.status;
+    last_reload_notice_time_ = time_;
+    return result.status;
 }
 
 Vec3 RangeSimulation::aim() const {
