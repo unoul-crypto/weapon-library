@@ -20,6 +20,7 @@ struct RangeVisualDefinition {
     ModelTransform model_transform;
     std::filesystem::path animation_file;
     std::string reload_clip;
+    std::string attack_clip;
 };
 
 RangeVisualDefinition default_visual(unsigned weapon_index);

@@ -1,4 +1,4 @@
-# Weapon Library v0.7.0
+# Weapon Library v0.9.0
 
 A small C++17 foundation for reusable weapon mechanics. The core has no external
 dependencies, graphics, physics engine, platform calls or wall-clock access.
@@ -16,9 +16,13 @@ dependencies, graphics, physics engine, platform calls or wall-clock access.
 - Cadence, magazine capacity, configurable ammo cost and dry-fire events.
 - One ordered stream of action transitions and shot events.
 - Independent aiming, seeded spread, shot bloom and accumulating/recovering recoil.
+- Optional per-instance spread models for nonlinear game-owned accuracy factors,
+  shared by HUD snapshots and shot sampling.
 - Interruptible reload actions, finite reserves and an atomic ammunition-source contract.
 - Engine-independent weapon mounts and configurable reload keyframe poses.
 - Range adapter for custom OBJ/GLB/GLTF models and named skeletal reload clips.
+- A melee mechanism with active-phase sweeps, per-attack entity deduplication,
+  blocking contacts and configurable target limits through a game-owned world adapter.
 - An optional interactive 3D firing range, with separate game logic and rendering.
 - An independent ballistics module: finite-speed projectiles, gravity, flow-relative
   air/water resistance, swept queries and medium transitions within an update.
@@ -27,6 +31,8 @@ The action core remains usable on its own. `FiringMechanism` composes it with
 trigger, cadence and ammunition rules. `weapon_library::ballistics` provides
 projectile motion through a game-supplied world adapter. The game owns collision
 geometry and damage; inventory-backed reloading connects through `AmmunitionSource`.
+`MeleeMechanism` reuses the action phases and queries a `MeleeWorld` only during
+the active swing. See [the melee contract and knife example](docs/melee.md).
 
 ## Build and test
 
@@ -58,7 +64,7 @@ scripts\build-windows.cmd --run
 
 The launcher builds the demo using CMake directly and opens its window. It does
 not run a PowerShell script or change execution policies. Enter with a click or Enter.
-The scene has three targets, three weapon configurations, hit feedback, short
+The scene has three ranged targets, a near melee target, four weapon configurations, hit feedback, short
 projectile trails, ammo counters, accuracy and scoring. Every shot comes from the
 library's `ShotFiredEvent`; hits are counted when its flying projectile impacts.
 The blue region in front of target 03 contains water. The HUD shows flight time,
@@ -87,10 +93,11 @@ increase the target hit counter. Use V to inspect the drop.
 | Mouse | Aim |
 | Right mouse | Hold to aim down sights |
 | WASD | Move within the firing area |
-| Left mouse / F | Fire; hold for rifle/turret, tap for pistol |
+| Left mouse / F | Attack; hold for rifle/turret, tap for pistol/knife |
 | 1 / 2 / 3 | Select pistol / rifle / turret firing configuration |
+| 4 | Select knife; approach the near target to the left of the starting position |
 | R | Reload from this weapon's reserve |
-| Q | Cancel reload without spending reserve ammo |
+| Q | Cancel reload or the current knife swing |
 | F5 | Reload weapon models and animation settings without resetting the session |
 | Home | Reset the entire practice session: ammo, reserves, pose, targets and statistics |
 | V | Toggle 0.1x slow motion to inspect trajectories and medium transitions |
@@ -112,6 +119,14 @@ animated magazine. The launchers read these source configs; press F5 to apply ed
 See [model and animation customization](docs/presentation.md) for the file format
 and reusable library API.
 
+The knife has a 0.16 s windup, a 0.18 s active thrust, 0.28 s recovery and 1.6 m reach.
+Its directed attack follows the aim line; contact markers lie on real surfaces.
+It consumes no ammo and hits each entity at most once per swing. Holding attack
+does not repeat it, and pressing during a busy action does not queue a new swing.
+Q or switching cancels the demo knife; phase-specific cancellation remains
+configurable in the library. `knife.weapon` configures its model, attack keyframes
+and optional skeletal clip. F5 preserves a swing's current progress while reloading assets.
+
 The demo is OFF by default. Enabling it fetches pinned raylib 5.5; the library and
 headless tests still build without graphics or downloads. To reuse an existing
 raylib 5.5 source checkout, pass `-RaylibSource <directory>` to the helper.
@@ -132,6 +147,7 @@ a screenshot:
 ./build/native/Release/weapon_library_range.exe --smoke build/qa/range.png
 ./build/native/Release/weapon_library_range.exe --smoke-water build/qa/water.png
 ./build/native/Release/weapon_library_range.exe --smoke-reload build/qa/reload.png
+./build/native/Release/weapon_library_range.exe --smoke-melee build/qa/melee.png
 ```
 
 `examples/range/RangeSimulation` owns movement, room/target hit queries and counters,

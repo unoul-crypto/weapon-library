@@ -1,7 +1,7 @@
-# Weapon models and reload animation
+# Weapon models and animation
 
 The library provides `WeaponPresentation` (in the normal `weapon_library` target):
-validated, immutable mount offsets and reload keyframes with no graphics dependency.
+validated, immutable mount offsets, reload and attack keyframes with no graphics dependency.
 The game owns model files, textures, skeletons and rendering. The range demonstrates
 this boundary through `RangeVisuals` (file parsing) and `RangeRenderer` (raylib assets).
 Another engine can consume the same presentation poses and use its own asset loader.
@@ -14,9 +14,10 @@ helper. Edit one of the files in `examples/range/visuals`:
 - `pistol.weapon`
 - `rifle.weapon`
 - `turret.weapon`
+- `knife.weapon`
 
 Press F5 in the range to load changes, including during a reload. Ammo, target hits,
-reload timing and simulation time are preserved. All three configs and their assets
+reload/attack timing and simulation time are preserved. All four configs and their assets
 must load successfully before replacement. Errors appear in the HUD and console;
 failed updates retain the previous working setup. At startup, a configuration error
 leaves the built-in shapes available.
@@ -28,11 +29,11 @@ The build copies bundled files there when building the range. To use your own di
 weapon_library_range --visuals path/to/visuals
 ```
 
-Copy all three configs to that directory. Model and animation paths are relative
+Copy all four configs to that directory. Model and animation paths are relative
 to their respective `.weapon` file, independent of the process working directory.
 Paths may contain spaces; do not quote values inside the config. Blank lines and
 whole-line `#` comments are allowed. Unknown keys, duplicate settings (except
-`reload_key`), invalid numbers and malformed tracks are errors.
+`reload_key` and `attack_key`), invalid numbers and malformed tracks are errors.
 
 ## Model and muzzle
 
@@ -107,6 +108,15 @@ a magazine bone; `scripts/generate-range-model.py` can regenerate this original
 asset with the Python standard library. Python is not required to build or play.
 
 ## Integrate in another game
+
+For the knife, `attack_key` uses the same seven-number format and validation as
+`reload_key`. Its progress covers the **entire** action (windup, active, recovery).
+`attack_interpolation` selects `smooth` or `linear` independently of the reload track.
+Use `attack_motion = none` to disable whole-weapon motion. `attack_clip = Slash`
+selects a skeletal clip from the model or shared `animation` file; it is mapped to
+`MeleeState::attack_progress` and restores frame zero when ready or cancelled.
+The clip must include its own windup and recovery. These visual settings do not
+change collision timing, reach or arc. See [melee integration](melee.md).
 
 ```cpp
 #include <weapon_library/WeaponPresentation.h>

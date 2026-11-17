@@ -11,6 +11,18 @@ All angles are radians, and time is simulation seconds.
 movement penalties, bloom per shot, bloom cap/recovery, recoil impulse/jitter,
 aimed recoil scaling, recoil caps and an exponential recoil return rate.
 
+ADS spread is configurable, including values larger than the hip cone. For example:
+
+```cpp
+weapon_library::HandlingDefinition settings;
+settings.aimed_spread_rad = 0.01; // Half-angle in radians (about 0.57 degrees).
+weapon_library::WeaponHandling handling(settings);
+```
+
+This only changes the base aimed cone; movement and current bloom still contribute.
+Set their respective settings to zero if they are not wanted. The default aimed
+half-angle is 0.002 radians; the range keeps its existing weapon presets.
+
 The game sends `set_aiming(bool)` and a normalized movement factor in `[0, 1]`.
 The library does not interpret speed, character pose or controller buttons.
 Aim fraction moves linearly between 0 and 1; interrupted transitions continue from
@@ -25,6 +37,59 @@ continues advancing it. Both accumulated effects have explicit caps.
 camera's zoom and model position remain presentation choices. `recoiled_direction`
 returns the center direction including recoil, without spread. It does not change
 state or consume random numbers.
+
+## Custom spread logic
+
+`SpreadModel` is an optional `std::function<double(const SpreadContext&)>`. Supply
+it as the third constructor argument or replace it using `set_spread_model`.
+It may combine the built-in result with game-specific factors or calculate the
+entire cone itself. No fixed list of character/environment factors enters the core:
+the game owns those and captures them in its callable.
+
+```cpp
+struct AccuracyFactors {
+    double stamina = 1.0; // Game maintains values in its chosen units/ranges.
+    double heat = 0.0;
+    bool underwater = false;
+} factors;
+
+weapon_library::WeaponHandling handling({}, 42,
+    [&factors](const weapon_library::SpreadContext& context) {
+        const double fatigue = 1.0 - factors.stamina;
+        return context.default_half_angle_rad + 0.03 * fatigue * fatigue
+            + 0.01 * factors.heat + (factors.underwater ? 0.02 : 0.0);
+    });
+// Later, game commands update factors without reconstructing the handling state.
+factors.stamina = 0.5;
+const double displayed_cone = handling.state().spread_half_angle_rad;
+// handling.set_spread_model({}); // Restore the built-in formula without resetting state/RNG.
+```
+
+The context includes the weapon's definition, a pre-shot handling snapshot
+(simulation time, aim fraction, movement, bloom and recoil), and the built-in cone.
+The snapshot's `spread_half_angle_rad` also holds that built-in cone. Context
+references are valid only during the call; captured objects must outlive their use.
+Models are per instance and may share game-owned read-only data as needed.
+
+Return a **finite half-angle in [0, pi/2)**, in radians. The core validates the
+model at installation and each evaluation. An invalid replacement preserves the
+previous model; invalid shot-time output or a throwing callback fails before RNG,
+recoil or bloom mutations. `state()` and `sample_shot()` can therefore throw for a
+failing model. Definition values retain their original validation even when a
+custom model replaces the formula.
+
+Use a pure evaluator: do not advance game state, consume random values, reenter
+the handling instance or retain context references. The same model is evaluated
+by both the HUD snapshot and the physical shot sampler, so queries must have no
+side effects. Time updates do not evaluate it. The direction distribution remains
+the library's seeded uniform solid-angle cone, with the same three RNG values per
+shot. Current-shot sampling uses pre-shot bloom/recoil; their impulses follow it.
+
+For replay or catch-up, supply external factors at **each shot's simulation time**
+rather than the end of a rendered frame. Context-based curves can use
+`context.handling.time_seconds` directly; historical character/world state belongs
+to the host. With identical factors, shot times and seed, custom models preserve
+the existing frame-independent sampling behavior.
 
 ## Sampling an actual shot
 

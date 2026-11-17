@@ -40,6 +40,18 @@ void poses_follow_authoritative_reload_state() {
     require(same(WeaponPresentation(d).sample_reload(0.5).offset, {}), "Disabled motion was not identity");
 }
 
+void attack_tracks_are_independent() {
+    PresentationDefinition d;
+    d.attack_keyframes = {{0, {}}, {1, {{1, 0, 0}, {0, 90, 0}}}};
+    d.attack_interpolation = PoseInterpolation::Linear;
+    WeaponPresentation presentation(d);
+    require(same(presentation.sample_attack(0.25).offset, {0.25, 0, 0}) &&
+            same(presentation.sample_attack(0.25).rotation_degrees, {0, 22.5, 0}) &&
+            same(presentation.sample_reload(0.5).offset, {0, -0.14, -0.1}), "Attack and reload tracks interfered");
+    d.attack_keyframes[1].progress = 0;
+    rejects([&] { WeaponPresentation invalid(d); });
+}
+
 void invalid_definitions_are_rejected() {
     PresentationDefinition d;
     d.reload_keyframes[1].progress = 0;
@@ -63,6 +75,7 @@ int main() {
     try {
         poses_follow_authoritative_reload_state();
         invalid_definitions_are_rejected();
+        attack_tracks_are_independent();
         std::cout << "Presentation tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';

@@ -1,4 +1,5 @@
 #include "RangeSimulation.h"
+#include "RangeVisuals.h"
 
 #include <algorithm>
 #include <cmath>
@@ -39,7 +40,7 @@ std::optional<BoxInterval> intersect_box(Vec3 from, Vec3 delta, Vec3 low, Vec3 h
 
 class RangeWorld final : public ProjectileWorld {
 public:
-    explicit RangeWorld(const std::array<Target, 3>& targets, bool include_media = true)
+    explicit RangeWorld(const std::array<Target, 4>& targets, bool include_media = true)
         : targets_(targets), include_media_(include_media) {}
     std::optional<SegmentInteraction> trace(const FlightSegment& segment, const Medium& medium) const override {
         const auto delta = segment.to - segment.from;
@@ -66,7 +67,7 @@ public:
             const auto p = segment.from + delta * t;
             if (t >= 0.0 && t <= 1.0 &&
                 std::hypot(p.x - target.center.x, p.y - target.center.y) <= target.radius) {
-                consider({InteractionType::Impact, t, i + 1, {0, 0, 1}});
+                consider({InteractionType::Impact, t, i + 1, {0, 0, delta.z < 0.0 ? 1.0 : -1.0}});
             }
         }
         const auto& cover = firing_cover();
@@ -86,8 +87,124 @@ public:
         return nearest;
     }
 private:
-    const std::array<Target, 3>& targets_;
+    const std::array<Target, 4>& targets_;
     bool include_media_;
+};
+
+struct SurfaceContact {
+    std::uint64_t object_id;
+    double fraction; // Distance fraction along the blade, not time.
+    Vec3 position, normal;
+};
+
+// Sweep a sphere along the blade against a convex shape. The bounding box only
+// rejects candidates: contact positions come from the actual shape's surface.
+template <typename ClosestPoint>
+std::optional<SurfaceContact> sweep_convex(Vec3 from, Vec3 delta, double radius, Vec3 low, Vec3 high,
+    std::uint64_t id, Vec3 fallback_normal, ClosestPoint closest) {
+    const Vec3 padding{radius, radius, radius};
+    const auto bounds = intersect_box(from, delta, low - padding, high + padding);
+    if (!bounds || bounds->exit < 0 || bounds->entry > 1) return std::nullopt;
+    const auto distance_squared = [&](double t) {
+        const auto p = from + delta * t;
+        const auto offset = p - closest(p);
+        return dot(offset, offset);
+    };
+    const double start = std::max(0.0, bounds->entry), end = std::min(1.0, bounds->exit);
+    double left = start, right = end;
+    // Distance to a convex shape along a segment is convex; find its minimum,
+    // then the first radius crossing. This also handles rounded disk/box edges.
+    for (int i = 0; i < 64; ++i) {
+        const double a = left + (right - left) / 3.0, b = right - (right - left) / 3.0;
+        if (distance_squared(a) <= distance_squared(b)) right = b;
+        else left = a;
+    }
+    const double minimum = (left + right) * 0.5;
+    const double radius_squared = radius * radius;
+    if (distance_squared(minimum) > radius_squared + 1e-12) return std::nullopt;
+    left = start; right = minimum;
+    if (distance_squared(start) > radius_squared) {
+        for (int i = 0; i < 48; ++i) {
+            const double middle = (left + right) * 0.5;
+            if (distance_squared(middle) <= radius_squared) right = middle;
+            else left = middle;
+        }
+    } else right = start;
+    const auto center = from + delta * right;
+    const auto point = closest(center);
+    const auto offset = center - point;
+    const auto normal = length(offset) > 1e-10 ? weapon_library::math::normalized(offset) : fallback_normal;
+    return SurfaceContact{id, right, point, normal};
+}
+
+std::optional<SurfaceContact> trace_melee_volume(const std::array<Target, 4>& targets, Vec3 origin, Vec3 tip, double radius) {
+    const auto delta = tip - origin;
+    std::optional<SurfaceContact> nearest;
+    const auto consider = [&](const std::optional<SurfaceContact>& hit) {
+        if (hit && (!nearest || hit->fraction < nearest->fraction)) nearest = hit;
+    };
+    for (std::size_t i = 0; i < targets.size(); ++i) {
+        const auto& target = targets[i];
+        const Vec3 size{target.radius, target.radius, 0};
+        consider(sweep_convex(origin, delta, radius, target.center - size, target.center + size, i + 1,
+            Vec3{0, 0, delta.z <= 0 ? 1.0 : -1.0}, [&](Vec3 p) {
+                const double dx = p.x - target.center.x, dy = p.y - target.center.y;
+                const double distance = std::hypot(dx, dy);
+                const double scale = distance > target.radius ? target.radius / distance : 1.0;
+                return Vec3{target.center.x + dx * scale, target.center.y + dy * scale, target.center.z};
+            }));
+    }
+    const auto& box = firing_cover();
+    consider(sweep_convex(origin, delta, radius, box.min, box.max, 300, Vec3{0, 0, 1}, [&](Vec3 p) {
+        return Vec3{std::clamp(p.x, box.min.x, box.max.x), std::clamp(p.y, box.min.y, box.max.y), std::clamp(p.z, box.min.z, box.max.z)};
+    }));
+    const auto plane = [&](double value, double travel, double low, double high, Vec3 axis, std::uint64_t id) {
+        for (int side : {-1, 1}) {
+            const double boundary = side < 0 ? low : high;
+            const double padded = boundary - side * radius;
+            if (travel * side <= 0 || (value + travel - padded) * side < 0) continue;
+            const double t = std::max(0.0, (padded - value) / travel);
+            if (t > 1.0) continue;
+            const auto point = origin + delta * t + axis * (boundary - (value + travel * t));
+            consider(SurfaceContact{id, t, point, axis * -side});
+        }
+    };
+    plane(origin.x, delta.x, -7, 7, {1, 0, 0}, 100);
+    plane(origin.y, delta.y, 0, 6, {0, 1, 0}, 101);
+    plane(origin.z, delta.z, -33, 9, {0, 0, 1}, 102);
+    return nearest;
+}
+
+// Demo adapter: sweep a blade capsule through small angular/movement samples.
+// Production games can replace this with their physics engine's continuous sweep.
+class RangeMeleeWorld final : public weapon_library::MeleeWorld {
+public:
+    RangeMeleeWorld(const std::array<Target, 4>& targets, Vec3 eye, Vec3 velocity, Vec3 forward, double time)
+        : targets_(targets), eye_(eye), velocity_(velocity), forward_(forward), time_(time) {}
+    std::vector<weapon_library::MeleeContact> sweep(const weapon_library::MeleeSweep& query) const override {
+        const auto right = weapon_library::math::normalized(weapon_library::math::cross(forward_, {0, 1, 0}));
+        const double duration = query.to_time_seconds - query.from_time_seconds;
+        const int steps = duration == 0.0 ? 0 : std::max(1, static_cast<int>(std::ceil(std::max(
+            (query.to_progress - query.from_progress) * query.arc_radians / 0.01,
+            duration * length(velocity_) / 0.01))));
+        for (int i = 0; i <= steps; ++i) {
+            const double fraction = steps == 0 ? 0.0 : static_cast<double>(i) / steps;
+            const double progress = query.from_progress + (query.to_progress - query.from_progress) * fraction;
+            const double angle = (progress - 0.5) * query.arc_radians;
+            const auto direction = forward_ * std::cos(angle) + right * std::sin(angle);
+            auto origin = eye_ + velocity_ * (query.from_time_seconds + duration * fraction - time_);
+            origin.x = std::clamp(origin.x, -5.5, 5.5);
+            origin.z = std::clamp(origin.z, 1.5, 7.0);
+            const auto tip = origin + direction * query.reach_m;
+            if (const auto hit = trace_melee_volume(targets_, origin, tip, query.radius_m))
+                return {{hit->object_id, fraction, hit->position, hit->normal, true}};
+        }
+        return {};
+    }
+private:
+    const std::array<Target, 4>& targets_;
+    Vec3 eye_, velocity_, forward_;
+    double time_;
 };
 } // namespace
 
@@ -129,9 +246,7 @@ const std::array<WeaponSpec, 3>& weapon_specs() {
 }
 
 RangeSimulation::RangeSimulation() {
-    weapon_library::PresentationDefinition pistol;
-    pistol.muzzle_offset.z = 0.22;
-    presentation_[0] = weapon_library::WeaponPresentation(std::move(pistol));
+    for (unsigned i = 0; i < weapon_count; ++i) presentation_[i] = default_visual(i).presentation;
     reset();
 }
 
@@ -146,7 +261,11 @@ void RangeSimulation::reset() {
         handling_[i] = std::make_unique<WeaponHandling>(spec.handling, 0x92d68ca2u + static_cast<std::uint32_t>(i) * 7919u);
         reserves_[i] = std::make_shared<AmmunitionReserve>(spec.reserve_rounds);
     }
-    targets_ = {{{{-3.0, 1.65, -9.0}}, {{0.0, 1.65, -17.0}}, {{3.0, 1.65, -27.0}}}};
+    handling_[knife_index] = std::make_unique<WeaponHandling>(HandlingDefinition{});
+    const auto knife_actions = std::make_shared<const WeaponDefinition>(std::vector<ActionDefinition>{
+        {3, 0.16, 0.18, 0.28, {true, true, true}}});
+    melee_ = std::make_unique<MeleeMechanism>(knife_actions, MeleeDefinition{3, 1.6, 0.08, 0.0});
+    targets_ = {{{{-3.0, 1.65, -9.0}}, {{0.0, 1.65, -17.0}}, {{3.0, 1.65, -27.0}}, {{-2.3, 1.65, 2.8}, 0.45}}};
     traces_.clear();
     projectiles_.clear();
     recent_results_.clear();
@@ -158,29 +277,33 @@ void RangeSimulation::reset() {
     last_shot_time_ = last_hit_time_ = last_dry_time_ = -10.0;
     water_entries_ = 0;
     aiming_ = false;
+    melee_trigger_held_ = false;
+    attacks_ = melee_hits_ = 0;
     last_reload_status_ = ReloadStatus::Accepted;
     last_reload_notice_time_ = -10.0;
 }
 
 void RangeSimulation::select_weapon(unsigned index) {
-    if (index >= weapons_.size()) {
+    if (index >= weapon_count) {
         throw std::invalid_argument("Unknown range weapon");
     }
     if (index == selected_) return;
     set_trigger(false);
-    if (weapons_[selected_]->state().reload.active) cancel_reload();
+    if (is_melee()) cancel_attack();
+    else if (weapons_[selected_]->state().reload.active) cancel_reload();
     handling_[selected_]->set_aiming(false);
     selected_ = index;
-    handling_[selected_]->set_aiming(aiming_ && !weapons_[selected_]->state().reload.active);
+    handling_[selected_]->set_aiming(!is_melee() && aiming_ && !weapon_state().reload.active);
     last_reload_notice_time_ = -10.0;
 }
 
 void RangeSimulation::set_aiming(bool aiming) {
     aiming_ = aiming;
-    handling_[selected_]->set_aiming(aiming && !weapons_[selected_]->state().reload.active);
+    handling_[selected_]->set_aiming(!is_melee() && aiming && !weapon_state().reload.active);
 }
 
 weapon_library::ReloadStatus RangeSimulation::request_reload() {
+    if (is_melee()) return weapon_library::ReloadStatus::Unsupported;
     const auto result = weapons_[selected_]->request_reload(reserves_[selected_]);
     consume(result.events, selected_);
     if (result.accepted()) {
@@ -193,6 +316,7 @@ weapon_library::ReloadStatus RangeSimulation::request_reload() {
 }
 
 weapon_library::ReloadStatus RangeSimulation::cancel_reload() {
+    if (is_melee()) return weapon_library::ReloadStatus::Unsupported;
     const auto result = weapons_[selected_]->cancel_reload();
     consume(result.events, selected_);
     last_reload_status_ = result.status;
@@ -238,6 +362,15 @@ void RangeSimulation::set_movement(double forward, double strafe) {
 }
 
 void RangeSimulation::set_trigger(bool held) {
+    if (is_melee()) {
+        const bool pressed = held && !melee_trigger_held_;
+        melee_trigger_held_ = held;
+        if (pressed) {
+            const RangeMeleeWorld world(targets_, eye_, movement_velocity_, aim(), time_);
+            consume_melee(melee_->execute(weapon_library::MeleeCommand::Attack, world).events);
+        }
+        return;
+    }
     consume(weapons_[selected_]->execute(held ? weapon_library::TriggerCommand::Press
                                             : weapon_library::TriggerCommand::Release), selected_);
 }
@@ -270,12 +403,14 @@ void RangeSimulation::advance(double seconds, double forward, double strafe) {
         double cursor = time_;
         for (const auto& shot : pending) {
             const double at = std::clamp(shot.time, cursor, end);
+            advance_melee(at - cursor);
             advance_projectiles(at - cursor);
             advance_handling(at - cursor);
             move(at - cursor);
             shoot(at, shot.weapon_index);
             cursor = at;
         }
+        advance_melee(end - cursor);
         advance_projectiles(end - cursor);
         advance_handling(end - cursor);
         move(end - cursor);
@@ -306,7 +441,52 @@ void RangeSimulation::move(double seconds) {
     eye_.z = std::clamp(eye_.z, 1.5, 7.0);
 }
 
-weapon_library::FiringState RangeSimulation::weapon_state() const { return weapons_[selected_]->state(); }
+weapon_library::FiringState RangeSimulation::weapon_state() const {
+    if (!is_melee()) return weapons_[selected_]->state();
+    weapon_library::FiringState state{};
+    state.weapon = melee_->state().weapon;
+    return state;
+}
+
+weapon_library::CommandStatus RangeSimulation::cancel_attack() {
+    const RangeMeleeWorld world(targets_, eye_, movement_velocity_, view_direction(yaw_, pitch_), time_);
+    const auto result = melee_->execute(weapon_library::MeleeCommand::Cancel, world);
+    consume_melee(result.events);
+    return result.status;
+}
+
+void RangeSimulation::advance_melee(double seconds) {
+    const RangeMeleeWorld world(targets_, eye_, movement_velocity_, view_direction(yaw_, pitch_), melee_->state().weapon.time_seconds);
+    consume_melee(melee_->advance(seconds, world));
+}
+
+void RangeSimulation::consume_melee(const std::vector<weapon_library::MeleeEvent>& events) {
+    for (const auto& event : events) {
+        if (const auto* action = std::get_if<weapon_library::WeaponEvent>(&event)) {
+            if (action->type == weapon_library::EventType::ActionStarted) ++attacks_;
+        } else if (const auto* hit = std::get_if<weapon_library::MeleeHitEvent>(&event)) {
+            ShotResult result;
+            result.position = hit->position;
+            result.normal = hit->normal;
+            result.time_seconds = hit->time_seconds;
+            result.melee = true;
+            if (hit->target_id >= 1 && hit->target_id <= targets_.size()) {
+                auto& target = targets_[static_cast<std::size_t>(hit->target_id - 1)];
+                ++target.hits;
+                ++melee_hits_;
+                target.last_hit_time = hit->time_seconds;
+                last_hit_time_ = std::max(last_hit_time_, hit->time_seconds);
+                score_ += 5;
+                result.outcome = ShotOutcome::Target;
+            } else if (hit->target_id == 300) result.outcome = ShotOutcome::Cover;
+            else if (hit->normal.y > 0.5) result.outcome = ShotOutcome::Floor;
+            else if (hit->normal.y < -0.5) result.outcome = ShotOutcome::Ceiling;
+            else result.outcome = ShotOutcome::Wall;
+            if (result.time_seconds >= last_result_.time_seconds) last_result_ = result;
+            recent_results_.push_back(result);
+        }
+    }
+}
 
 void RangeSimulation::consume(const std::vector<weapon_library::FiringEvent>& events,
                               unsigned weapon_index, std::vector<PendingShot>* pending) {

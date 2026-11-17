@@ -131,10 +131,10 @@ void recovery_and_randomness_are_independent_of_frame_partition() {
             "Advancing more frames consumed extra random numbers");
 }
 
-std::vector<HandledShot> simulate_fire(bool partitioned) {
+std::vector<HandledShot> simulate_fire(bool partitioned, SpreadModel spread_model = {}) {
     auto actions = std::make_shared<const WeaponDefinition>(std::vector<ActionDefinition>{{1, 0.03, 0.0, 0.04}});
     FiringMechanism firing(actions, {1, FireMode::Automatic, 0.1, 30}, 30);
-    WeaponHandling handling({}, 444);
+    WeaponHandling handling({}, 444, std::move(spread_model));
     handling.set_aiming(true);
     std::vector<HandledShot> result;
     const auto consume = [&](const std::vector<FiringEvent>& events) {
@@ -190,6 +190,77 @@ void invalid_inputs_preserve_runtime_and_rng() {
     require(same(h.sample_shot({0, 0, -1}).direction, reference.sample_shot({0, 0, -1}).direction),
             "Invalid input consumed random samples");
 }
+
+void aimed_spread_is_configurable_without_a_model() {
+    auto d = no_kick();
+    d.aim_in_seconds = 0;
+    d.hip_spread_rad = 0.01;
+    d.aimed_spread_rad = 0.04;
+    d.bloom_per_shot_rad = 0;
+    WeaponHandling handling(d, 81);
+    handling.set_aiming(true);
+    const auto shot = handling.sample_shot({0, 0, -1});
+    require(near(shot.spread_half_angle_rad, 0.04) && near(handling.state().spread_half_angle_rad, 0.04) &&
+            !same(shot.direction, {0, 0, -1}), "Configured ADS cone was overridden by aiming");
+}
+
+void custom_spread_uses_live_game_factors_and_pre_shot_state() {
+    double stamina = 0.5, heat = 0.2;
+    bool underwater = true;
+    const SpreadModel model = [&](const SpreadContext& context) {
+        require(near(context.handling.spread_half_angle_rad, context.default_half_angle_rad), "Model context lacked the built-in cone");
+        require(context.definition.hip_spread_rad == 0.018, "Model context lost the weapon definition");
+        const double fatigue = 1.0 - stamina;
+        return context.default_half_angle_rad + 0.03 * fatigue * fatigue + heat * 0.01 + (underwater ? 0.02 : 0);
+    };
+    WeaponHandling handling({}, 456, model);
+    handling.set_aiming(true); handling.advance(0.1); handling.set_movement_factor(0.4);
+    WeaponHandling built_in({}, 456);
+    built_in.set_aiming(true); built_in.advance(0.1); built_in.set_movement_factor(0.4);
+    const auto before = handling.state();
+    require(near(before.spread_half_angle_rad, built_in.state().spread_half_angle_rad + 0.0295), "Custom factors were not applied");
+    const auto shot = handling.sample_shot({0, 0, -1});
+    require(near(shot.spread_half_angle_rad, before.spread_half_angle_rad) &&
+            handling.state().spread_half_angle_rad > shot.spread_half_angle_rad, "Model used post-shot bloom for the current shot");
+    stamina = 1; heat = 0; underwater = false;
+    const double restored = handling.state().spread_half_angle_rad;
+    require(restored < before.spread_half_angle_rad, "Changing captured game factors did not update spread");
+    const auto recoil = handling.state().recoil;
+    handling.set_spread_model({});
+    require(near(handling.state().spread_half_angle_rad, restored) && near(handling.state().time_seconds, 0.1) &&
+            near(handling.state().recoil.pitch_rad, recoil.pitch_rad), "Restoring built-in spread reset handling state");
+}
+
+void invalid_spread_models_preserve_state_and_rng() {
+    double cone = 0.04;
+    const SpreadModel model = [&](const SpreadContext&) { return cone; };
+    WeaponHandling handling({}, 719, model), reference({}, 719, model);
+    rejects([&] { handling.set_spread_model([](const SpreadContext&) { return -1.0; }); });
+    require(near(handling.state().spread_half_angle_rad, cone), "Invalid replacement discarded the old spread model");
+    for (double invalid : {-1.0, std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::infinity(),
+                           1.57079632679489661923}) {
+        cone = invalid;
+        rejects([&] { handling.state(); });
+        rejects([&] { handling.sample_shot({0, 0, -1}); });
+    }
+    cone = 0.04;
+    const auto state = handling.state();
+    require(state.time_seconds == 0 && state.bloom_rad == 0 && state.recoil.pitch_rad == 0, "Invalid model mutated handling state");
+    require(same(handling.sample_shot({0, 0, -1}).direction, reference.sample_shot({0, 0, -1}).direction),
+            "Invalid model consumed random values");
+    rejects([] { WeaponHandling invalid({}, 1, [](const SpreadContext&) { return 2.0; }); });
+}
+
+void custom_models_preserve_seeded_catch_up() {
+    const SpreadModel model = [](const SpreadContext& c) {
+        return c.default_half_angle_rad * (1.0 + c.handling.time_seconds * c.handling.time_seconds);
+    };
+    const auto one = simulate_fire(false, model), many = simulate_fire(true, model);
+    require(one.size() == many.size() && one.size() == 10, "Custom spread lost catch-up shots");
+    for (std::size_t i = 0; i < one.size(); ++i)
+        require(near(one[i].spread_half_angle_rad, many[i].spread_half_angle_rad) && same(one[i].direction, many[i].direction),
+                "Custom spread evaluated at frame time instead of shot time");
+}
 }
 
 int main() {
@@ -201,7 +272,11 @@ int main() {
         {"Frame partition", recovery_and_randomness_are_independent_of_frame_partition},
         {"Shot timestamps", catch_up_shots_use_their_individual_times},
         {"Vertical and tiny cones", vertical_aim_and_tiny_cones_remain_valid},
-        {"Invalid inputs", invalid_inputs_preserve_runtime_and_rng}
+        {"Invalid inputs", invalid_inputs_preserve_runtime_and_rng},
+        {"Configurable aimed cone", aimed_spread_is_configurable_without_a_model},
+        {"Custom spread factors", custom_spread_uses_live_game_factors_and_pre_shot_state},
+        {"Invalid spread models", invalid_spread_models_preserve_state_and_rng},
+        {"Custom spread catch-up", custom_models_preserve_seeded_catch_up}
     };
     int failed = 0;
     for (const auto& test : tests) {

@@ -1,4 +1,5 @@
 #include "RangeVisuals.h"
+#include "RangeSimulation.h"
 
 #include <cmath>
 #include <fstream>
@@ -28,9 +29,16 @@ void vector(const std::string& value, weapon_library::math::Vec3& v) { numbers(v
 } // namespace
 
 RangeVisualDefinition default_visual(unsigned weapon_index) {
-    if (weapon_index >= 3) throw std::invalid_argument("Unknown range weapon");
+    if (weapon_index >= weapon_count) throw std::invalid_argument("Unknown range weapon");
     weapon_library::PresentationDefinition definition;
     if (weapon_index == 0) definition.muzzle_offset.z = 0.22;
+    if (weapon_index == knife_index) {
+        definition.hip_offset = {0.23, -0.2, 0.55};
+        definition.aimed_offset = definition.hip_offset;
+        definition.reload_keyframes.clear();
+        definition.attack_keyframes = {{0, {}}, {0.258, {{0, 0.02, -0.08}, {70, 0, -10}}},
+            {0.548, {{-0.23, 0.18, 0.18}, {85, 0, 0}}}, {1, {}}};
+    }
     RangeVisualDefinition result;
     result.presentation = weapon_library::WeaponPresentation(std::move(definition));
     return result;
@@ -53,10 +61,11 @@ RangeVisualDefinition load_visual(const std::filesystem::path& file, unsigned we
             const auto key = trim(line.substr(0, equal));
             const auto value = trim(line.substr(equal + 1));
             const bool first = seen.insert(key).second;
-            if (!first && key != "reload_key") throw std::invalid_argument("Duplicate setting: " + key);
+            if (!first && key != "reload_key" && key != "attack_key") throw std::invalid_argument("Duplicate setting: " + key);
             if (key == "model") result.model_file = value;
             else if (key == "animation") result.animation_file = value;
             else if (key == "reload_clip") result.reload_clip = value;
+            else if (key == "attack_clip") result.attack_clip = value;
             else if (key == "model_offset") vector(value, result.model_transform.offset);
             else if (key == "model_rotation") vector(value, result.model_transform.rotation_degrees);
             else if (key == "model_scale") {
@@ -68,36 +77,37 @@ RangeVisualDefinition load_visual(const std::filesystem::path& file, unsigned we
             else if (key == "hip_offset") vector(value, definition.hip_offset);
             else if (key == "aimed_offset") vector(value, definition.aimed_offset);
             else if (key == "muzzle_offset") vector(value, definition.muzzle_offset);
-            else if (key == "reload_interpolation") {
-                if (value == "smooth") definition.interpolation = weapon_library::PoseInterpolation::Smooth;
-                else if (value == "linear") definition.interpolation = weapon_library::PoseInterpolation::Linear;
-                else throw std::invalid_argument("Reload interpolation must be smooth or linear");
+            else if (key == "reload_interpolation" || key == "attack_interpolation") {
+                auto& interpolation = key == "reload_interpolation" ? definition.interpolation : definition.attack_interpolation;
+                if (value == "smooth") interpolation = weapon_library::PoseInterpolation::Smooth;
+                else if (value == "linear") interpolation = weapon_library::PoseInterpolation::Linear;
+                else throw std::invalid_argument("Pose interpolation must be smooth or linear");
             }
-            else if (key == "reload_key") {
-                if (first) definition.reload_keyframes.clear();
-                weapon_library::ReloadKeyframe keyframe{};
+            else if (key == "reload_key" || key == "attack_key") {
+                auto& keys = key == "reload_key" ? definition.reload_keyframes : definition.attack_keyframes;
+                if (first) keys.clear();
+                weapon_library::PoseKeyframe keyframe{};
                 auto& p = keyframe.pose;
                 numbers(value, keyframe.progress, p.offset.x, p.offset.y, p.offset.z,
                         p.rotation_degrees.x, p.rotation_degrees.y, p.rotation_degrees.z);
-                definition.reload_keyframes.push_back(keyframe);
+                keys.push_back(keyframe);
             }
-            else if (key == "reload_motion") {
-                if (value != "none") throw std::invalid_argument("Use reload_motion = none to disable keyframe motion");
-                definition.reload_keyframes.clear();
+            else if (key == "reload_motion" || key == "attack_motion") {
+                if (value != "none") throw std::invalid_argument("Use motion = none to disable keyframe motion");
+                (key == "reload_motion" ? definition.reload_keyframes : definition.attack_keyframes).clear();
             }
             else throw std::invalid_argument("Unknown visual setting: " + key);
         }
         if (input.bad()) throw std::runtime_error("Failed to read visual config");
-        if (seen.count("reload_motion") && seen.count("reload_key"))
-            throw std::invalid_argument("Use reload_motion or reload_key, not both");
-        if (!result.animation_file.empty() && result.reload_clip.empty())
-            throw std::invalid_argument("Animation file requires reload_clip");
-        if (!result.reload_clip.empty() && result.model_file.empty())
-            throw std::invalid_argument("Reload clip requires a model");
+        if ((seen.count("reload_motion") && seen.count("reload_key")) || (seen.count("attack_motion") && seen.count("attack_key")))
+            throw std::invalid_argument("Use motion or keyframes for a track, not both");
+        const bool has_clip = !result.reload_clip.empty() || !result.attack_clip.empty();
+        if (!result.animation_file.empty() && !has_clip) throw std::invalid_argument("Animation file requires a clip name");
+        if (has_clip && result.model_file.empty()) throw std::invalid_argument("Animation clip requires a model");
         result.presentation = weapon_library::WeaponPresentation(std::move(definition));
         if (!result.model_file.empty()) result.model_file = (file.parent_path() / result.model_file).lexically_normal();
         if (!result.animation_file.empty()) result.animation_file = (file.parent_path() / result.animation_file).lexically_normal();
-        else if (!result.reload_clip.empty()) result.animation_file = result.model_file;
+        else if (has_clip) result.animation_file = result.model_file;
         return result;
     } catch (const std::exception& error) {
         throw std::runtime_error(file.filename().string() + ":" + std::to_string(line_number) + ": " + error.what());

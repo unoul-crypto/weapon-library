@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
+#include <utility>
 
 namespace weapon_library {
 namespace {
@@ -31,7 +32,7 @@ Basis kicked(Basis b, AngularOffset offset) {
 bool multiplier(double value) { return std::isfinite(value) && value >= 0.0 && value <= 1.0; }
 }
 
-WeaponHandling::WeaponHandling(HandlingDefinition definition, std::uint32_t seed)
+WeaponHandling::WeaponHandling(HandlingDefinition definition, std::uint32_t seed, SpreadModel spread_model)
     : definition_(definition), random_state_(seed == 0 ? 0x6d2b79f5u : seed) {
     const double nonnegative[] = {definition.aim_in_seconds, definition.aim_out_seconds,
         definition.hip_spread_rad, definition.aimed_spread_rad, definition.movement_spread_rad,
@@ -48,18 +49,31 @@ WeaponHandling::WeaponHandling(HandlingDefinition definition, std::uint32_t seed
         definition.max_recoil_rad.yaw_rad >= pi * 0.5 || definition.max_recoil_rad.pitch_rad >= pi * 0.5) {
         throw std::invalid_argument("Invalid handling multipliers, recoil or spread cone");
     }
+    set_spread_model(std::move(spread_model));
 }
 
-double WeaponHandling::spread() const noexcept {
+double WeaponHandling::spread(const SpreadModel& model) const {
     const auto& d = definition_;
     const double aimed = state_.aim_fraction;
-    return d.hip_spread_rad * (1.0 - aimed) + d.aimed_spread_rad * aimed + state_.bloom_rad +
+    const double built_in = d.hip_spread_rad * (1.0 - aimed) + d.aimed_spread_rad * aimed + state_.bloom_rad +
         d.movement_spread_rad * state_.movement_factor * (1.0 + (d.aimed_movement_multiplier - 1.0) * aimed);
+    if (!model) return built_in;
+    auto snapshot = state_;
+    snapshot.spread_half_angle_rad = built_in;
+    const double result = model(SpreadContext{definition_, snapshot, built_in});
+    if (!std::isfinite(result) || result < 0.0 || result >= pi * 0.5)
+        throw std::invalid_argument("Spread model must return a finite half-angle in [0, pi/2)");
+    return result;
 }
 
-HandlingState WeaponHandling::state() const noexcept {
+void WeaponHandling::set_spread_model(SpreadModel model) {
+    spread(model); // Validate before replacing the model; no clock, RNG or shot mutations.
+    spread_model_ = std::move(model);
+}
+
+HandlingState WeaponHandling::state() const {
     auto snapshot = state_;
-    snapshot.spread_half_angle_rad = spread();
+    snapshot.spread_half_angle_rad = spread(spread_model_);
     return snapshot;
 }
 
@@ -106,7 +120,7 @@ math::Vec3 WeaponHandling::recoiled_direction(math::Vec3 aim, math::Vec3 up_hint
 
 HandledShot WeaponHandling::sample_shot(math::Vec3 aim, math::Vec3 up_hint) {
     const auto b = kicked(basis(aim, up_hint), state_.recoil); // Validate before state/RNG changes.
-    const double cone = spread();
+    const double cone = spread(spread_model_);
     // Uniform solid-angle cone around the current aim, independent of the renderer.
     const double sin_half_angle = std::sqrt(random_unit()) * std::sin(cone * 0.5);
     const double cos_angle = 1.0 - 2.0 * sin_half_angle * sin_half_angle;

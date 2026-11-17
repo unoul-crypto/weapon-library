@@ -19,11 +19,19 @@ struct KeyPresses {
     bool contains(int key) const { return std::find(keys.begin(), keys.end(), key) != keys.end(); }
 };
 
-int smoke(const char* screenshot, bool water, bool reload, weapon_range::RangeRenderer& renderer) {
+int smoke(const char* screenshot, bool water, bool reload, bool melee, weapon_range::RangeRenderer& renderer) {
     weapon_range::RangeSimulation range;
     const bool visuals_loaded = renderer.reload_visuals(range);
     bool okay;
-    if (reload) {
+    if (melee) {
+        range.advance(2.3 / 3.2, 0, -1);
+        range.advance(0.28, 1, 0);
+        range.select_weapon(weapon_range::knife_index);
+        range.set_trigger(true);
+        range.advance(0.26);
+        okay = range.attacks() == 1 && range.melee_hits() == 1 && range.targets()[3].hits == 1 &&
+               range.shots() == 0 && range.projectiles().empty() && range.is_melee();
+    } else if (reload) {
         range.select_weapon(1);
         range.set_trigger(true);
         range.advance(0.25);
@@ -54,10 +62,14 @@ int smoke(const char* screenshot, bool water, bool reload, weapon_range::RangeRe
         range.set_trigger(false);
         okay = range.shots() == 4 && range.hits() == 4 && range.weapon_state().rounds_remaining == 26;
     }
-    if (reload) {
+    if (reload || melee) {
         // Refresh assets midway through reload, as with F5: no gameplay reset.
-        okay = renderer.reload_visuals(range) && okay && range.weapon_state().reload.active &&
-               range.weapon_state().rounds_remaining == 27 && range.reserve_rounds() == 150;
+        const auto attack_progress = range.melee_state().attack_progress;
+        okay = renderer.reload_visuals(range) && okay;
+        if (reload) okay = okay && range.weapon_state().reload.active &&
+            range.weapon_state().rounds_remaining == 27 && range.reserve_rounds() == 150;
+        if (melee) okay = okay && range.melee_state().attack_progress == attack_progress &&
+            range.melee_state().weapon.phase == weapon_library::Phase::Active && range.attacks() == 1;
     }
     for (int frame = 0; frame < 4; ++frame) renderer.draw(range, true, water);
     const auto path = std::filesystem::path(screenshot);
@@ -71,18 +83,29 @@ int smoke(const char* screenshot, bool water, bool reload, weapon_range::RangeRe
         okay = okay && !range.weapon_state().reload.active && range.weapon_state().rounds_remaining == 30 &&
                range.reserve_rounds() == 147 && range.shots() == 3;
     }
-    std::printf("Range smoke (%s): shots=%u hits=%u ammo=%u flight=%.2fms impact=%.2fm/s screenshot=%s\n",
-                reload ? "reload" : water ? "water" : "air", range.shots(), range.hits(), range.weapon_state().rounds_remaining,
-                range.last_flight_seconds() * 1000.0, range.last_impact_speed(), exported ? "saved" : "failed");
+    if (melee) {
+        range.advance(1);
+        range.set_trigger(true);
+        okay = okay && range.attacks() == 1 && range.melee_hits() == 1;
+        range.set_trigger(false); range.set_trigger(true); range.set_trigger(false);
+        range.advance(1);
+        okay = okay && range.attacks() == 2 && range.melee_hits() == 2 && range.shots() == 0;
+    }
+    if (melee) std::printf("Range smoke (melee): swings=%u hits=%u screenshot=%s\n",
+                          range.attacks(), range.melee_hits(), exported ? "saved" : "failed");
+    else std::printf("Range smoke (%s): shots=%u hits=%u ammo=%u flight=%.2fms impact=%.2fm/s screenshot=%s\n",
+                     reload ? "reload" : water ? "water" : "air", range.shots(), range.hits(), range.weapon_state().rounds_remaining,
+                     range.last_flight_seconds() * 1000.0, range.last_impact_speed(), exported ? "saved" : "failed");
     return okay && exported && visuals_loaded ? 0 : 1;
 }
 
 } // namespace
 
 int main(int argc, char** argv) {
+    const bool melee_test = argc >= 2 && std::strcmp(argv[1], "--smoke-melee") == 0;
     const bool water_test = argc >= 2 && std::strcmp(argv[1], "--smoke-water") == 0;
     const bool reload_test = argc >= 2 && std::strcmp(argv[1], "--smoke-reload") == 0;
-    const bool testing = water_test || reload_test || (argc >= 2 && std::strcmp(argv[1], "--smoke") == 0);
+    const bool testing = melee_test || water_test || reload_test || (argc >= 2 && std::strcmp(argv[1], "--smoke") == 0);
     SetConfigFlags(FLAG_MSAA_4X_HINT | (testing ? FLAG_WINDOW_HIDDEN : FLAG_WINDOW_RESIZABLE));
     InitWindow(1280, 800, "Weapon Library - Firing Range");
     if (!IsWindowReady()) return 1;
@@ -95,7 +118,7 @@ int main(int argc, char** argv) {
     }
     auto renderer = std::make_unique<weapon_range::RangeRenderer>(visual_directory);
     if (testing) {
-        const int result = smoke(argc >= 3 ? argv[2] : "build/qa/range.png", water_test, reload_test, *renderer);
+        const int result = smoke(argc >= 3 ? argv[2] : "build/qa/range.png", water_test, reload_test, melee_test, *renderer);
         renderer.reset();
         CloseWindow();
         return result;
@@ -130,7 +153,7 @@ int main(int argc, char** argv) {
             }
         } else {
             bool changed = false;
-            for (int index = 0; index < 3; ++index) {
+            for (int index = 0; index < static_cast<int>(weapon_range::weapon_count); ++index) {
                 if (pressed.contains(KEY_ONE + index)) {
                     range.select_weapon(static_cast<unsigned>(index));
                     changed = true;
@@ -141,7 +164,9 @@ int main(int argc, char** argv) {
                 if (range.request_reload() == weapon_library::ReloadStatus::Accepted) changed = true;
             }
             if (pressed.contains(KEY_Q)) {
-                if (range.cancel_reload() == weapon_library::ReloadStatus::Accepted) changed = true;
+                if (range.is_melee()) {
+                    if (range.cancel_attack() == weapon_library::CommandStatus::Accepted) changed = true;
+                } else if (range.cancel_reload() == weapon_library::ReloadStatus::Accepted) changed = true;
             }
             if (pressed.contains(KEY_V)) { slow_motion = !slow_motion; accumulated = 0.0; }
             if (changed) armed = false;

@@ -13,23 +13,41 @@ double fraction(double value) {
     return std::clamp(value, 0.0, 1.0);
 }
 math::Vec3 blend(math::Vec3 a, math::Vec3 b, double t) { return a * (1.0 - t) + b * t; }
+void validate_track(const std::vector<PoseKeyframe>& keys) {
+    if (!keys.empty() && (keys.size() < 2 || keys.front().progress != 0.0 || keys.back().progress != 1.0))
+        throw std::invalid_argument("Pose keyframes must cover progress 0 to 1");
+    double previous = -1.0;
+    for (const auto& key : keys) {
+        if (!std::isfinite(key.progress) || key.progress < 0.0 || key.progress > 1.0 || key.progress <= previous ||
+            !finite(key.pose.offset) || !finite(key.pose.rotation_degrees))
+            throw std::invalid_argument("Pose keyframes must be finite and strictly ordered");
+        previous = key.progress;
+    }
+}
+
+PresentationPose sample_track(const std::vector<PoseKeyframe>& keys, PoseInterpolation interpolation, double progress) {
+    const double t = fraction(progress);
+    if (keys.empty()) return {};
+    if (t <= keys.front().progress) return keys.front().pose;
+    if (t >= keys.back().progress) return keys.back().pose;
+    const auto upper = std::upper_bound(keys.begin(), keys.end(), t,
+        [](double value, const PoseKeyframe& key) { return value < key.progress; });
+    const auto& a = *(upper - 1);
+    const auto& b = *upper;
+    double weight = (t - a.progress) / (b.progress - a.progress);
+    if (interpolation == PoseInterpolation::Smooth) weight = weight * weight * (3.0 - 2.0 * weight);
+    return {blend(a.pose.offset, b.pose.offset, weight), blend(a.pose.rotation_degrees, b.pose.rotation_degrees, weight)};
+}
 } // namespace
 
 WeaponPresentation::WeaponPresentation(PresentationDefinition definition) : definition_(std::move(definition)) {
     if (!finite(definition_.hip_offset) || !finite(definition_.aimed_offset) || !finite(definition_.muzzle_offset))
         throw std::invalid_argument("Presentation offsets must be finite");
-    if (definition_.interpolation != PoseInterpolation::Linear && definition_.interpolation != PoseInterpolation::Smooth)
+    if ((definition_.interpolation != PoseInterpolation::Linear && definition_.interpolation != PoseInterpolation::Smooth) ||
+        (definition_.attack_interpolation != PoseInterpolation::Linear && definition_.attack_interpolation != PoseInterpolation::Smooth))
         throw std::invalid_argument("Unknown presentation interpolation");
-    const auto& keys = definition_.reload_keyframes;
-    if (!keys.empty() && (keys.size() < 2 || keys.front().progress != 0.0 || keys.back().progress != 1.0))
-        throw std::invalid_argument("Reload keyframes must cover progress 0 to 1");
-    double previous = -1.0;
-    for (const auto& key : keys) {
-        if (!std::isfinite(key.progress) || key.progress < 0.0 || key.progress > 1.0 || key.progress <= previous ||
-            !finite(key.pose.offset) || !finite(key.pose.rotation_degrees))
-            throw std::invalid_argument("Reload keyframes must be finite and strictly ordered");
-        previous = key.progress;
-    }
+    validate_track(definition_.reload_keyframes);
+    validate_track(definition_.attack_keyframes);
 }
 
 math::Vec3 WeaponPresentation::mount_offset(double aim_fraction) const {
@@ -37,18 +55,11 @@ math::Vec3 WeaponPresentation::mount_offset(double aim_fraction) const {
 }
 
 PresentationPose WeaponPresentation::sample_reload(double progress) const {
-    const double t = fraction(progress);
-    const auto& keys = definition_.reload_keyframes;
-    if (keys.empty()) return {};
-    if (t <= keys.front().progress) return keys.front().pose;
-    if (t >= keys.back().progress) return keys.back().pose;
-    const auto upper = std::upper_bound(keys.begin(), keys.end(), t,
-        [](double value, const ReloadKeyframe& key) { return value < key.progress; });
-    const auto& a = *(upper - 1);
-    const auto& b = *upper;
-    double weight = (t - a.progress) / (b.progress - a.progress);
-    if (definition_.interpolation == PoseInterpolation::Smooth) weight = weight * weight * (3.0 - 2.0 * weight);
-    return {blend(a.pose.offset, b.pose.offset, weight), blend(a.pose.rotation_degrees, b.pose.rotation_degrees, weight)};
+    return sample_track(definition_.reload_keyframes, definition_.interpolation, progress);
+}
+
+PresentationPose WeaponPresentation::sample_attack(double progress) const {
+    return sample_track(definition_.attack_keyframes, definition_.attack_interpolation, progress);
 }
 
 double WeaponPresentation::reload_progress(const ReloadState& reload) {

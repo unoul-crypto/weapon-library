@@ -4,6 +4,7 @@
 #include <weapon_library/Ballistics.h>
 #include <weapon_library/WeaponHandling.h>
 #include <weapon_library/WeaponPresentation.h>
+#include <weapon_library/MeleeMechanism.h>
 
 #include <array>
 #include <memory>
@@ -12,6 +13,7 @@
 namespace weapon_range {
 
 using Vec3 = weapon_library::ballistics::Vec3;
+constexpr unsigned firearm_count = 3, weapon_count = 4, knife_index = 3;
 Vec3 view_direction(double yaw, double pitch);
 
 struct WaterVolume { Vec3 min{1.7, 0.0, -25.0}, max{4.3, 3.2, -19.0}; };
@@ -50,6 +52,7 @@ struct ShotResult {
     double flight_seconds = 0.0;
     double speed_m_s = 0.0;
     bool passed_water = false;
+    bool melee = false;
 };
 
 struct WeaponSpec {
@@ -76,6 +79,7 @@ public:
     void set_trigger(bool held);
     weapon_library::ReloadStatus request_reload();
     weapon_library::ReloadStatus cancel_reload();
+    weapon_library::CommandStatus cancel_attack();
     void set_aiming(bool aiming);
     void set_movement(double forward, double strafe);
     void look(double yaw_delta, double pitch_delta);
@@ -89,11 +93,16 @@ public:
     weapon_library::HandlingState handling_state() const;
     double time() const noexcept { return time_; }
     unsigned selected_weapon() const noexcept { return selected_; }
+    bool is_melee() const noexcept { return selected_ == knife_index; }
+    weapon_library::MeleeState melee_state() const noexcept { return melee_->state(); }
+    const weapon_library::MeleeDefinition& melee_definition() const noexcept { return melee_->definition(); }
+    unsigned attacks() const noexcept { return attacks_; }
+    unsigned melee_hits() const noexcept { return melee_hits_; }
     weapon_library::FiringState weapon_state() const;
-    unsigned reserve_rounds() const noexcept { return reserves_[selected_]->available_rounds(); }
+    unsigned reserve_rounds() const noexcept { return is_melee() ? 0 : reserves_[selected_]->available_rounds(); }
     weapon_library::ReloadStatus last_reload_status() const noexcept { return last_reload_status_; }
     double last_reload_notice_time() const noexcept { return last_reload_notice_time_; }
-    const std::array<Target, 3>& targets() const noexcept { return targets_; }
+    const std::array<Target, 4>& targets() const noexcept { return targets_; }
     const std::vector<ShotTrace>& traces() const noexcept { return traces_; }
     const std::vector<RangeProjectile>& projectiles() const noexcept { return projectiles_; }
     const std::vector<ShotResult>& recent_results() const noexcept { return recent_results_; }
@@ -114,16 +123,19 @@ private:
     void consume(const std::vector<weapon_library::FiringEvent>& events, unsigned weapon_index,
                  std::vector<PendingShot>* pending = nullptr);
     void shoot(double time, unsigned weapon_index);
+    void consume_melee(const std::vector<weapon_library::MeleeEvent>& events);
+    void advance_melee(double seconds);
     void advance_projectiles(double seconds);
     void move(double seconds);
     void advance_handling(double seconds);
     WeaponPose weapon_pose(unsigned weapon_index) const;
 
     std::array<std::unique_ptr<weapon_library::FiringMechanism>, 3> weapons_;
-    std::array<std::unique_ptr<weapon_library::WeaponHandling>, 3> handling_;
+    std::array<std::unique_ptr<weapon_library::WeaponHandling>, weapon_count> handling_;
     std::array<std::shared_ptr<weapon_library::AmmunitionReserve>, 3> reserves_;
-    std::array<weapon_library::WeaponPresentation, 3> presentation_;
-    std::array<Target, 3> targets_;
+    std::array<weapon_library::WeaponPresentation, weapon_count> presentation_;
+    std::unique_ptr<weapon_library::MeleeMechanism> melee_;
+    std::array<Target, 4> targets_;
     std::vector<ShotTrace> traces_;
     std::vector<RangeProjectile> projectiles_;
     std::vector<ShotResult> recent_results_;
@@ -135,6 +147,8 @@ private:
     double last_shot_time_ = -10.0, last_hit_time_ = -10.0, last_dry_time_ = -10.0;
     unsigned water_entries_ = 0;
     bool aiming_ = false;
+    bool melee_trigger_held_ = false;
+    unsigned attacks_ = 0, melee_hits_ = 0;
     weapon_library::ReloadStatus last_reload_status_ = weapon_library::ReloadStatus::Accepted;
     double last_reload_notice_time_ = -10.0;
 };

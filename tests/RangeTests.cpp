@@ -275,6 +275,121 @@ void reload_preserves_scene_stats_and_ammunition() {
             !range.weapon_state().reload.active && range.shots() == 0, "Reset retained reload state");
 }
 
+void approach_melee_target(weapon_range::RangeSimulation& range) {
+    range.advance(2.3 / 3.2, 0, -1);
+    range.advance(0.28, 1, 0);
+    range.select_weapon(weapon_range::knife_index);
+}
+
+void melee_reach_phases_hold_and_ammunition() {
+    weapon_range::RangeSimulation range;
+    range.select_weapon(weapon_range::knife_index);
+    range.set_trigger(true); range.set_trigger(false);
+    range.advance(1);
+    require(range.attacks() == 1 && range.melee_hits() == 0 && range.shots() == 0, "Knife hit from outside its reach");
+    range.reset();
+    approach_melee_target(range);
+    range.set_trigger(true);
+    range.advance(0.15);
+    require(range.melee_hits() == 0 && range.melee_state().weapon.phase == weapon_library::Phase::Windup,
+            "Knife hit during windup");
+    range.advance(0.11);
+    require(range.melee_hits() == 1 && range.targets()[3].hits == 1 && range.last_result().melee &&
+            range.last_result().outcome == weapon_range::ShotOutcome::Target, "Active knife swing missed the near target");
+    range.advance(2);
+    range.set_trigger(true);
+    require(range.attacks() == 1 && range.melee_hits() == 1, "Holding the attack repeated swings/hits");
+    require(range.weapon_state().rounds_remaining == 0 && range.reserve_rounds() == 0 && range.projectiles().empty(),
+            "Knife exposed ammunition or spawned a projectile");
+    require(range.request_reload() == weapon_library::ReloadStatus::Unsupported, "Knife attempted to reload");
+    range.set_aiming(true); range.advance(0.3);
+    require(range.handling_state().aim_fraction == 0, "Knife used firearm ADS");
+    range.set_trigger(false); range.set_trigger(true); range.set_trigger(false);
+    range.advance(1);
+    require(range.attacks() == 2 && range.melee_hits() == 2 && range.targets()[3].hits == 2, "Fresh press did not start another swing");
+    for (unsigned i = 0; i < weapon_range::firearm_count; ++i) {
+        range.select_weapon(i);
+        require(range.weapon_state().rounds_remaining == weapon_range::weapon_specs()[i].capacity &&
+                range.reserve_rounds() == weapon_range::weapon_specs()[i].reserve_rounds, "Melee spent firearm ammunition");
+    }
+}
+
+void melee_cancellation_direction_cover_and_movement() {
+    weapon_range::RangeSimulation range;
+    approach_melee_target(range);
+    range.set_trigger(true); range.set_trigger(false); range.advance(0.1);
+    require(range.cancel_attack() == weapon_library::CommandStatus::Accepted, "Knife windup could not be cancelled");
+    range.advance(1);
+    require(range.melee_hits() == 0, "Cancelled knife hit later");
+    range.set_trigger(true); range.set_trigger(false); range.advance(0.1);
+    range.select_weapon(0); range.advance(1);
+    require(range.melee_hits() == 0 && range.melee_state().weapon.phase == weapon_library::Phase::Ready,
+            "Switching left a hidden knife attack running");
+    range.select_weapon(weapon_range::knife_index);
+    range.look(3.141592653589793, 0);
+    range.set_trigger(true); range.set_trigger(false); range.advance(1);
+    require(range.melee_hits() == 0, "Knife hit a target behind the attacker");
+
+    range.reset();
+    range.advance(3.0 / 3.2, 0, 1);
+    range.advance(3.5 / 3.2, 1, 0);
+    range.look(0, -0.25);
+    range.select_weapon(weapon_range::knife_index);
+    range.set_trigger(true); range.set_trigger(false); range.advance(1);
+    require(range.last_result().melee && range.last_result().outcome == weapon_range::ShotOutcome::Cover &&
+            range.melee_hits() == 0 && range.melee_state().blocked, "Knife ignored solid cover");
+
+    weapon_range::RangeSimulation large, partitioned;
+    large.advance(2.3 / 3.2, 0, -1); partitioned.advance(2.3 / 3.2, 0, -1);
+    large.select_weapon(weapon_range::knife_index); partitioned.select_weapon(weapon_range::knife_index);
+    large.set_trigger(true); partitioned.set_trigger(true);
+    large.advance(1, 1, 0);
+    for (int i = 0; i < 100; ++i) partitioned.advance(0.01, 1, 0);
+    require(large.melee_hits() == 1 && partitioned.melee_hits() == 1 && large.attacks() == 1 && partitioned.attacks() == 1,
+            "Moving melee attacks changed with update partitioning");
+}
+
+void melee_contacts_follow_aim_and_lie_on_real_surfaces() {
+    weapon_range::RangeSimulation centered;
+    approach_melee_target(centered);
+    centered.set_trigger(true); centered.set_trigger(false); centered.advance(0.3);
+    const auto target = centered.targets()[3];
+    const auto point = centered.last_result().position;
+    require(centered.melee_hits() == 1 && weapon_library::math::length(point - target.center) < 1e-8,
+            "Centered knife thrust left a lateral or padded-plane contact offset");
+
+    for (double offset : {-0.5, -0.2, 0.2, 0.5}) {
+        weapon_range::RangeSimulation edge;
+        approach_melee_target(edge);
+        edge.look(std::atan2(offset, edge.eye().z - target.center.z), 0);
+        edge.set_trigger(true); edge.set_trigger(false); edge.advance(0.3);
+        const auto contact = edge.last_result().position;
+        require(edge.melee_hits() == 1 && std::abs(contact.z - target.center.z) < 1e-9 &&
+                std::hypot(contact.x - target.center.x, contact.y - target.center.y) <= target.radius + 1e-9 &&
+                (contact.x - target.center.x) * offset > 0, "Knife contact did not lie on the aimed target surface");
+    }
+    weapon_range::RangeSimulation miss;
+    approach_melee_target(miss);
+    miss.look(std::atan2(0.65, miss.eye().z - target.center.z), 0);
+    miss.set_trigger(true); miss.set_trigger(false); miss.advance(1);
+    require(miss.melee_hits() == 0, "A miss outside the blade radius was pulled toward the crosshair target");
+
+    weapon_range::RangeSimulation cover;
+    cover.advance(3.0 / 3.2, 0, 1); cover.advance(3.5 / 3.2, 1, 0); cover.look(0, -0.25);
+    cover.select_weapon(weapon_range::knife_index); cover.set_trigger(true); cover.set_trigger(false); cover.advance(1);
+    const auto p = cover.last_result().position;
+    const auto box = weapon_range::firing_cover();
+    require(cover.last_result().outcome == weapon_range::ShotOutcome::Cover &&
+            p.x >= box.min.x && p.x <= box.max.x && p.y >= box.min.y && p.y <= box.max.y && p.z >= box.min.z && p.z <= box.max.z &&
+            (std::abs(p.y - box.max.y) < 1e-8 || std::abs(p.z - box.max.z) < 1e-8), "Cover marker was left on an inflated collider");
+
+    weapon_range::RangeSimulation wall;
+    wall.advance(5.5 / 3.2, 0, -1); wall.look(-1.5707963267948966, 0);
+    wall.select_weapon(weapon_range::knife_index); wall.set_trigger(true); wall.set_trigger(false); wall.advance(1);
+    require(wall.last_result().outcome == weapon_range::ShotOutcome::Wall && std::abs(wall.last_result().position.x + 7) < 1e-8,
+            "Wall marker was left on a padded plane");
+}
+
 } // namespace
 
 int main() {
@@ -289,6 +404,9 @@ int main() {
         cover_blocks_the_muzzle_even_when_the_eye_sees_above_it();
         range_handling_preserves_catch_up_timing_and_ignores_dry_fire();
         reload_preserves_scene_stats_and_ammunition();
+        melee_reach_phases_hold_and_ammunition();
+        melee_cancellation_direction_cover_and_movement();
+        melee_contacts_follow_aim_and_lie_on_real_surfaces();
         std::cout << "PASS: Range ballistics, handling, cover, firing, switching and reset\n";
         return 0;
     } catch (const std::exception& error) {

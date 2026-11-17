@@ -1,0 +1,16 @@
+# Blank model uses the built-in knife. Custom OBJ/GLB/GLTF models also work.
+model =
+model_scale = 1 1 1
+model_offset = 0 0 0
+model_rotation = 0 0 0
+hip_offset = 0.23 -0.20 0.55
+aimed_offset = 0.23 -0.20 0.55
+muzzle_offset = 0 0 0.35
+reload_motion = none
+# Progress spans windup, active swing and recovery together.
+attack_interpolation = smooth
+attack_key = 0     0 0 0            0 0 0
+attack_key = 0.258 0 0.02 -0.08     70 0 -10
+attack_key = 0.548 -0.23 0.18 0.18  85 0 0
+attack_key = 1     0 0 0            0 0 0
+# Optional skeletal clip: attack_clip = Slash (requires a skinned model).

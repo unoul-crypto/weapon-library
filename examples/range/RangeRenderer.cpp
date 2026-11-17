@@ -32,7 +32,9 @@ struct WeaponAsset {
     ModelAnimation* animations = nullptr;
     int animation_count = 0;
     int reload_clip = -1;
+    int attack_clip = -1;
     int last_frame = -1;
+    int last_clip = -1;
 
     ~WeaponAsset() {
         if (animations) UnloadModelAnimations(animations, animation_count);
@@ -57,31 +59,42 @@ struct WeaponAsset {
             throw std::runtime_error("Supported model formats: OBJ, GLB, GLTF");
         model = LoadModel(path.c_str());
         if (!IsModelValid(model)) throw std::runtime_error("Cannot load model: " + definition.model_file.filename().string());
-        if (definition.reload_clip.empty()) return;
+        if (definition.reload_clip.empty() && definition.attack_clip.empty()) return;
         if (!std::filesystem::is_regular_file(definition.animation_file))
             throw std::runtime_error("Animation file not found");
         animations = LoadModelAnimations(definition.animation_file.string().c_str(), &animation_count);
-        for (int i = 0; i < animation_count; ++i) {
-            if (definition.reload_clip == animations[i].name) { reload_clip = i; break; }
-        }
-        if (reload_clip < 0) throw std::runtime_error("Reload clip not found: " + definition.reload_clip);
-        const auto& clip = animations[reload_clip];
-        if (model.boneCount == 0 || clip.frameCount < 1 || !IsModelAnimationValid(model, clip))
-            throw std::runtime_error("Reload clip skeleton does not match the model");
-        for (int i = 0; i < model.boneCount; ++i) {
-            if (std::string(model.bones[i].name) != clip.bones[i].name)
-                throw std::runtime_error("Reload clip bone names do not match the model");
-        }
+        reload_clip = find_clip(definition.reload_clip);
+        attack_clip = find_clip(definition.attack_clip);
     }
 
-    void animate(const weapon_library::ReloadState& reload) {
-        if (reload_clip < 0) return;
-        const auto& clip = animations[reload_clip];
-        const double progress = weapon_library::WeaponPresentation::reload_progress(reload);
+    int find_clip(const std::string& name) const {
+        if (name.empty()) return -1;
+        int index = -1;
+        for (int i = 0; i < animation_count; ++i) {
+            if (name == animations[i].name) { index = i; break; }
+        }
+        if (index < 0) throw std::runtime_error("Animation clip not found: " + name);
+        const auto& clip = animations[index];
+        if (model.boneCount == 0 || clip.frameCount < 1 || !IsModelAnimationValid(model, clip))
+            throw std::runtime_error("Animation clip skeleton does not match the model");
+        for (int i = 0; i < model.boneCount; ++i) {
+            if (std::string(model.bones[i].name) != clip.bones[i].name)
+                throw std::runtime_error("Animation clip bone names do not match the model");
+        }
+        return index;
+    }
+
+    void animate(const RangeSimulation& range) {
+        const int index = range.is_melee() ? attack_clip : reload_clip;
+        if (index < 0) return;
+        const auto& clip = animations[index];
+        const double progress = range.is_melee() ? range.melee_state().attack_progress :
+            weapon_library::WeaponPresentation::reload_progress(range.weapon_state().reload);
         const int frame = static_cast<int>(std::round(progress * (clip.frameCount - 1)));
-        if (frame != last_frame) {
+        if (index != last_clip || frame != last_frame) {
             UpdateModelAnimation(model, clip, frame);
             last_frame = frame;
+            last_clip = index;
         }
     }
 };
@@ -112,7 +125,7 @@ void draw_impact_marks(const RangeSimulation& range) {
         if (result.outcome == ShotOutcome::Expired) continue;
         const auto center = rv(result.position + result.normal * 0.025);
         const float alpha = static_cast<float>(std::clamp((2.0 - (range.time() - result.time_seconds)) / 0.5, 0.0, 1.0));
-        DrawSphere(center, 0.09f, Fade(result.outcome == ShotOutcome::Target ? teal : miss, alpha));
+        DrawSphere(center, result.melee ? 0.025f : 0.09f, Fade(result.outcome == ShotOutcome::Target ? teal : miss, alpha));
     }
 }
 
@@ -173,7 +186,8 @@ void draw_targets(const RangeSimulation& range) {
         cube({p.x, 0.42f, p.z - 0.1f}, {0.09f, 0.84f, 0.12f}, {90, 104, 112, 255});
         cube({p.x, 0.045f, p.z - 0.1f}, {1.1f, 0.09f, 0.75f}, {58, 73, 84, 255});
         const Color rings[] = {recent ? teal : white, {41, 61, 73, 255}, white, {242, 135, 65, 255}, ink};
-        const float radii[] = {0.9f, 0.72f, 0.53f, 0.34f, 0.16f};
+        const float radius = static_cast<float>(target.radius);
+        const float radii[] = {radius, radius * 0.8f, radius * 0.59f, radius * 0.38f, radius * 0.18f};
         for (int ring = 0; ring < 5; ++ring) {
             const float depth = p.z + static_cast<float>(ring) * 0.006f;
             DrawCylinderEx({p.x, p.y, depth - 0.008f}, {p.x, p.y, depth}, radii[ring], radii[ring], 48, rings[ring]);
@@ -197,7 +211,9 @@ void draw_target_labels(const RangeSimulation& range, Camera3D camera) {
     for (const auto& target : range.targets()) {
         const auto p = rv(target.center);
         char label[64];
-        std::snprintf(label, sizeof(label), "%02u", ++index);
+        ++index;
+        if (index == 4) std::snprintf(label, sizeof(label), "MELEE PRACTICE");
+        else std::snprintf(label, sizeof(label), "%02u", index);
         const Vec3 relative{target.center.x - range.eye().x, target.center.y - range.eye().y,
                             target.center.z - range.eye().z};
         const auto aim = range.aim();
@@ -218,7 +234,7 @@ void draw_held_weapon(const RangeSimulation& range, WeaponAsset& asset) {
     const auto pose = range.weapon_pose();
     const auto aim = pose.forward, right = pose.right, up = pose.up;
     const double age = range.time() - range.last_shot_time();
-    const double kick = age >= 0.0 ? std::exp(-age * 35.0) : 0.0;
+    const double kick = !range.is_melee() && age >= 0.0 ? std::exp(-age * 35.0) : 0.0;
     const Vec3 origin = pose.origin + aim * (-kick * 0.065) + up * (kick * 0.02);
     // Orient the visual in the view frame, independently of collision and firing rules.
     const float matrix[16] = {
@@ -231,7 +247,9 @@ void draw_held_weapon(const RangeSimulation& range, WeaponAsset& asset) {
     rlMultMatrixf(matrix);
     const auto reload = range.weapon_state().reload;
     transform_pose(asset.definition.presentation.reload_pose(reload));
-    asset.animate(reload);
+    if (range.is_melee() && range.melee_state().weapon.phase != weapon_library::Phase::Ready)
+        transform_pose(asset.definition.presentation.sample_attack(range.melee_state().attack_progress));
+    asset.animate(range);
     const bool pistol = range.selected_weapon() == 0;
     if (asset.model.meshCount) {
         rlPushMatrix();
@@ -240,6 +258,13 @@ void draw_held_weapon(const RangeSimulation& range, WeaponAsset& asset) {
         rlScalef(static_cast<float>(transform.scale.x), static_cast<float>(transform.scale.y), static_cast<float>(transform.scale.z));
         DrawModel(asset.model, {0, 0, 0}, 1.0f, WHITE);
         rlPopMatrix();
+    } else if (range.is_melee()) {
+        cube({0, -0.055f, 0}, {0.045f, 0.15f, 0.05f}, {36, 49, 57, 255});
+        for (float y : {-0.1f, -0.07f, -0.04f}) cube({0, y, 0}, {0.048f, 0.009f, 0.053f}, {65, 79, 87, 255});
+        cube({0, 0.03f, 0}, {0.10f, 0.025f, 0.025f}, accent);
+        cube({0, 0.135f, 0}, {0.045f, 0.19f, 0.016f}, {171, 195, 204, 255});
+        DrawTriangle3D({-0.0225f, 0.23f, -0.008f}, {0.0225f, 0.23f, -0.008f}, {0, 0.29f, 0}, white);
+        DrawTriangle3D({-0.0225f, 0.23f, 0.008f}, {0, 0.29f, 0}, {0.0225f, 0.23f, 0.008f}, muted);
     } else {
         cube({0, 0, 0}, {0.11f, 0.1f, pistol ? 0.24f : 0.4f}, {65, 79, 87, 255});
         cube({0, -0.1f, -0.06f}, {0.09f, 0.17f, 0.1f}, {29, 40, 49, 255});
@@ -248,7 +273,7 @@ void draw_held_weapon(const RangeSimulation& range, WeaponAsset& asset) {
         cube({0, 0.06f, 0.1f}, {0.004f, 0.01f, 0.01f}, accent);
         if (!pistol) cube({0, -0.1f, 0.06f}, {0.07f, 0.19f, 0.1f}, {36, 49, 57, 255});
     }
-    if (age >= 0 && age < 0.045) {
+    if (!range.is_melee() && age >= 0 && age < 0.045) {
         DrawSphere(rv(asset.definition.presentation.definition().muzzle_offset), 0.05f, {255, 218, 136, 255});
     }
     rlPopMatrix();
@@ -258,7 +283,6 @@ void draw_held_weapon(const RangeSimulation& range, WeaponAsset& asset) {
 void draw_hud(const RangeSimulation& range, bool playing, bool slow_motion) {
     const int width = GetScreenWidth(), height = GetScreenHeight();
     const auto state = range.weapon_state();
-    const auto& spec = weapon_specs()[range.selected_weapon()];
     DrawRectangle(0, 0, width, 4, accent);
     text("WEAPON LAB", 28, 24, 26, white);
     text("LIVE RANGE  /  " WEAPON_RANGE_VERSION, 29, 55, 15, muted);
@@ -266,24 +290,30 @@ void draw_hud(const RangeSimulation& range, bool playing, bool slow_motion) {
     DrawRectangle(24, 90, 300, 73, panel);
     char accuracy[96];
     constexpr double degrees = 57.29577951308232;
-    std::snprintf(accuracy, sizeof(accuracy), "AIM %03.0f%%   SPREAD %.2f DEG", handling.aim_fraction * 100.0,
-                  handling.spread_half_angle_rad * degrees);
+    if (range.is_melee()) std::snprintf(accuracy, sizeof(accuracy), "MELEE  /  REACH %.1f M", range.melee_definition().reach_m);
+    else std::snprintf(accuracy, sizeof(accuracy), "AIM %03.0f%%   SPREAD %.2f DEG", handling.aim_fraction * 100.0,
+                      handling.spread_half_angle_rad * degrees);
     text(accuracy, 36, 104, 15, teal);
-    std::snprintf(accuracy, sizeof(accuracy), "RECOIL %.2f / %.2f DEG", handling.recoil.yaw_rad * degrees,
-                  handling.recoil.pitch_rad * degrees);
+    if (range.is_melee()) std::snprintf(accuracy, sizeof(accuracy), "APPROACH THE NEAR TARGET");
+    else std::snprintf(accuracy, sizeof(accuracy), "RECOIL %.2f / %.2f DEG", handling.recoil.yaw_rad * degrees,
+                      handling.recoil.pitch_rad * degrees);
     text(accuracy, 36, 134, 15, muted);
     text(playing ? (slow_motion ? "SLOW / 0.1X" : "LIVE / 1.0X") : "PAUSED", width - 186, 28, 18, playing ? teal : accent);
     DrawRectangle(width - 260, 66, 232, 262, panel);
     char buffer[128];
-    std::snprintf(buffer, sizeof(buffer), "SHOTS  %03u    HITS  %03u", range.shots(), range.hits());
+    const auto attempts = range.is_melee() ? range.attacks() : range.shots();
+    const auto hits = range.is_melee() ? range.melee_hits() : range.hits();
+    std::snprintf(buffer, sizeof(buffer), "%s  %03u    HITS  %03u", range.is_melee() ? "STABS" : "SHOTS", attempts, hits);
     text(buffer, width - 246, 82, 17, white);
-    std::snprintf(buffer, sizeof(buffer), "ACCURACY  %03.0f%%", range.shots() ? 100.0 * range.hits() / range.shots() : 0.0);
+    std::snprintf(buffer, sizeof(buffer), "ACCURACY  %03.0f%%", attempts ? 100.0 * hits / attempts : 0.0);
     text(buffer, width - 246, 111, 17, muted);
     std::snprintf(buffer, sizeof(buffer), "SCORE  %04u", range.score());
     text(buffer, width - 246, 140, 18, accent);
     std::snprintf(buffer, sizeof(buffer), "IN FLIGHT  %02u", static_cast<unsigned>(range.projectiles().size()));
     text(buffer, width - 246, 174, 16, teal);
-    if (range.last_impact_time() >= 0.0) {
+    if (range.last_result().melee) {
+        text("CONTACT  /  MELEE", width - 246, 201, 16, white);
+    } else if (range.last_impact_time() >= 0.0) {
         std::snprintf(buffer, sizeof(buffer), "FLIGHT  %.1f MS", range.last_flight_seconds() * 1000.0);
         text(buffer, width - 246, 201, 16, white);
         std::snprintf(buffer, sizeof(buffer), "IMPACT  %.1f M/S", range.last_impact_speed());
@@ -293,23 +323,35 @@ void draw_hud(const RangeSimulation& range, bool playing, bool slow_motion) {
     text(result_label(result.outcome), width - 246, 266, 18,
          result.outcome == ShotOutcome::None ? muted : result.outcome == ShotOutcome::Target ? teal : miss);
     if (result.outcome != ShotOutcome::None) {
-        text(result.passed_water ? "PATH: WATER" : "PATH: AIR", width - 246, 295, 15, muted);
+        text(result.melee ? "BLADE CONTACT" : result.passed_water ? "PATH: WATER" : "PATH: AIR", width - 246, 295, 15, muted);
     }
 
     const int bottom = height - 195;
     DrawRectangle(24, bottom, 310, 145, panel);
-    text(spec.name, 40, bottom + 12, 21, white);
-    std::snprintf(buffer, sizeof(buffer), "%02u", state.rounds_remaining);
-    text(buffer, 40, bottom + 39, 42, state.rounds_remaining ? white : accent);
-    std::snprintf(buffer, sizeof(buffer), "/ %02u", spec.capacity);
-    text(buffer, 106, bottom + 56, 20, muted);
-    text(spec.mode == weapon_library::FireMode::SemiAutomatic ? "SEMI AUTO" : "FULL AUTO", 172, bottom + 45, 15, teal);
-    std::snprintf(buffer, sizeof(buffer), "%03.0f RPM", 60.0 / spec.interval_seconds);
-    text(buffer, 172, bottom + 68, 15, muted);
-    std::snprintf(buffer, sizeof(buffer), "MUZZLE  %.0f M/S", spec.muzzle_speed_m_s);
-    text(buffer, 40, bottom + 121, 15, muted);
-    std::snprintf(buffer, sizeof(buffer), "RESERVE  %03u", range.reserve_rounds());
-    text(buffer, 40, bottom + 98, 16, teal);
+    if (range.is_melee()) {
+        text("KNIFE", 40, bottom + 12, 21, white);
+        const auto phase = range.melee_state().weapon.phase;
+        const char* label = phase == weapon_library::Phase::Ready ? "READY" : phase == weapon_library::Phase::Windup ?
+            "WINDUP" : phase == weapon_library::Phase::Active ? "THRUST" : "RECOVERY";
+        text(label, 40, bottom + 46, 25, phase == weapon_library::Phase::Active ? accent : teal);
+        text("LMB / F  /  ONE STAB PER PRESS", 40, bottom + 84, 14, muted);
+        text("Q CANCEL  /  NO AMMO REQUIRED", 40, bottom + 112, 14, muted);
+        DrawRectangle(24, bottom - 10, static_cast<int>(310 * range.melee_state().attack_progress), 3, accent);
+    } else {
+        const auto& spec = weapon_specs()[range.selected_weapon()];
+        text(spec.name, 40, bottom + 12, 21, white);
+        std::snprintf(buffer, sizeof(buffer), "%02u", state.rounds_remaining);
+        text(buffer, 40, bottom + 39, 42, state.rounds_remaining ? white : accent);
+        std::snprintf(buffer, sizeof(buffer), "/ %02u", spec.capacity);
+        text(buffer, 106, bottom + 56, 20, muted);
+        text(spec.mode == weapon_library::FireMode::SemiAutomatic ? "SEMI AUTO" : "FULL AUTO", 172, bottom + 45, 15, teal);
+        std::snprintf(buffer, sizeof(buffer), "%03.0f RPM", 60.0 / spec.interval_seconds);
+        text(buffer, 172, bottom + 68, 15, muted);
+        std::snprintf(buffer, sizeof(buffer), "MUZZLE  %.0f M/S", spec.muzzle_speed_m_s);
+        text(buffer, 40, bottom + 121, 15, muted);
+        std::snprintf(buffer, sizeof(buffer), "RESERVE  %03u", range.reserve_rounds());
+        text(buffer, 40, bottom + 98, 16, teal);
+    }
     if (state.reload.active) {
         DrawRectangle(24, bottom - 45, 310, 37, panel);
         const double progress = weapon_library::WeaponPresentation::reload_progress(state.reload);
@@ -326,17 +368,17 @@ void draw_hud(const RangeSimulation& range, bool playing, bool slow_motion) {
         }
         if (notice) text(notice, 36, bottom - 30, 18, accent);
     }
-    for (unsigned i = 0; i < weapon_specs().size(); ++i) {
-        const int x = width - 368 + static_cast<int>(i) * 114;
+    for (unsigned i = 0; i < weapon_count; ++i) {
+        const int x = width - 482 + static_cast<int>(i) * 114;
         const bool selected = i == range.selected_weapon();
         DrawRectangle(x, bottom + 89, 106, 56, selected ? Color{71, 62, 46, 245} : panel);
         if (selected) DrawRectangle(x, bottom + 89, 106, 2, accent);
         std::snprintf(buffer, sizeof(buffer), "%u", i + 1);
         text(buffer, x + 10, bottom + 96, 14, muted);
-        centered(weapon_specs()[i].name, x + 53, bottom + 120, 16, selected ? accent : white);
+        centered(i == knife_index ? "KNIFE" : weapon_specs()[i].name, x + 53, bottom + 120, 16, selected ? accent : white);
     }
     DrawRectangle(0, height - 34, width, 34, ink);
-    centered("WASD MOVE  RMB AIM  LMB/F FIRE  R RELOAD  Q CANCEL  1-3 WEAPON  V SLOW  F5 VISUALS  HOME RESET  ESC PAUSE", width / 2, height - 23, width < 1200 ? 11 : 13, muted);
+    centered("WASD MOVE  RMB AIM  LMB/F ATTACK  R RELOAD  Q CANCEL  1-4 WEAPON  V SLOW  F5 VISUALS  HOME RESET  ESC PAUSE", width / 2, height - 23, width < 1200 ? 11 : 13, muted);
     const int cx = width / 2, cy = height / 2;
     const bool hit = range.time() - range.last_hit_time() < 0.16;
     const Color cross = hit ? accent : teal;
@@ -350,7 +392,7 @@ void draw_hud(const RangeSimulation& range, bool playing, bool slow_motion) {
     if (hit) {
         for (int x : {-1, 1}) for (int y : {-1, 1}) DrawLine(cx + x * 18, cy + y * 18, cx + x * 24, cy + y * 24, accent);
     }
-    if (!state.reload.active && range.time() - range.last_dry_time() < 0.9)
+    if (!range.is_melee() && !state.reload.active && range.time() - range.last_dry_time() < 0.9)
         centered("EMPTY  /  R TO RELOAD", cx, cy + 48, 18, accent);
     if (!playing) {
         DrawRectangle(0, 0, width, height, {6, 13, 20, 195});
@@ -360,7 +402,7 @@ void draw_hud(const RangeSimulation& range, bool playing, bool slow_motion) {
         centered("Aim, control recoil and watch the trajectory.", cx, cy - 54, 18, muted);
         centered("Click or press ENTER to enter", cx, cy + 1, 24, accent);
         centered("Hold RMB to aim. Fire with LMB or F.", cx, cy + 53, 17, white);
-        centered("V slows time. The blue volume is water.", cx, cy + 83, 16, muted);
+        centered("4 selects the knife. Approach the near target.", cx, cy + 83, 16, muted);
         centered("R reloads. Q cancels. Home resets the session.", cx, cy + 108, 15, muted);
     }
 }
@@ -368,9 +410,9 @@ void draw_hud(const RangeSimulation& range, bool playing, bool slow_motion) {
 } // namespace
 
 struct RangeRenderer::Impl {
-    std::array<std::unique_ptr<WeaponAsset>, 3> assets;
+    std::array<std::unique_ptr<WeaponAsset>, weapon_count> assets;
     explicit Impl(const std::filesystem::path* directory = nullptr) {
-        const char* files[] = {"pistol.weapon", "rifle.weapon", "turret.weapon"};
+        const char* files[] = {"pistol.weapon", "rifle.weapon", "turret.weapon", "knife.weapon"};
         for (unsigned i = 0; i < assets.size(); ++i) {
             assets[i] = std::make_unique<WeaponAsset>();
             assets[i]->definition = directory ? load_visual(*directory / files[i], i) : default_visual(i);

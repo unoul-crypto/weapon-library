@@ -3,6 +3,7 @@
 #include <weapon_library/Math.h>
 
 #include <cstdint>
+#include <functional>
 
 namespace weapon_library {
 
@@ -38,6 +39,16 @@ struct HandlingState {
     double spread_half_angle_rad = 0.0;
 };
 
+struct SpreadContext {
+    const HandlingDefinition& definition;
+    HandlingState handling; // Pre-shot snapshot; spread_half_angle_rad contains the built-in result.
+    double default_half_angle_rad;
+};
+
+// Pure evaluation: return a finite cone half-angle in [0, pi/2), in radians.
+// Capture game-owned factors; do not mutate/reenter the handling instance or consume RNG here.
+using SpreadModel = std::function<double(const SpreadContext&)>;
+
 struct HandledShot {
     math::Vec3 direction; // Unit direction, including pre-shot recoil and spread.
     double time_seconds;
@@ -50,9 +61,11 @@ struct HandledShot {
 // The host calls sample_shot exactly once per actual ShotFiredEvent, at its time.
 class WeaponHandling {
 public:
-    explicit WeaponHandling(HandlingDefinition definition = {}, std::uint32_t seed = 1);
+    explicit WeaponHandling(HandlingDefinition definition = {}, std::uint32_t seed = 1, SpreadModel spread_model = {});
     const HandlingDefinition& definition() const noexcept { return definition_; }
-    HandlingState state() const noexcept;
+    HandlingState state() const;
+    // An empty model restores the built-in formula. Invalid replacements leave the previous model installed.
+    void set_spread_model(SpreadModel model);
     void set_aiming(bool aiming) noexcept;
     void set_movement_factor(double factor);
     void advance(double seconds);
@@ -63,11 +76,12 @@ public:
     HandledShot sample_shot(math::Vec3 aim, math::Vec3 up_hint = {0, 1, 0});
 
 private:
-    double spread() const noexcept;
+    double spread(const SpreadModel& model) const;
     double random_unit() noexcept;
     HandlingDefinition definition_;
     HandlingState state_;
     std::uint32_t random_state_;
+    SpreadModel spread_model_;
 };
 
 } // namespace weapon_library

@@ -26,10 +26,12 @@ struct ConfigFixture {
     }
 };
 void configs_and_muzzle(const std::filesystem::path& assets) {
-    for (unsigned i = 0; i < 3; ++i) {
-        const char* names[] = {"pistol.weapon", "rifle.weapon", "turret.weapon"};
+    for (unsigned i = 0; i < weapon_range::weapon_count; ++i) {
+        const char* names[] = {"pistol.weapon", "rifle.weapon", "turret.weapon", "knife.weapon"};
         const auto visual = weapon_range::load_visual(assets / names[i], i);
-        require(!visual.presentation.definition().reload_keyframes.empty(), "Bundled reload motion is missing");
+        if (i == weapon_range::knife_index)
+            require(!visual.presentation.definition().attack_keyframes.empty(), "Bundled knife motion is missing");
+        else require(!visual.presentation.definition().reload_keyframes.empty(), "Bundled reload motion is missing");
         if (i == 1) require(std::filesystem::is_regular_file(visual.model_file), "Bundled model path failed");
     }
     ConfigFixture fixture;
@@ -64,6 +66,12 @@ void configs_and_muzzle(const std::filesystem::path& assets) {
     }
     const auto disabled = weapon_range::load_visual(fixture.write("reload_motion = none\n"), 0);
     require(disabled.presentation.definition().reload_keyframes.empty(), "Disabling keyframe motion failed");
+    const auto knife = weapon_range::load_visual(fixture.write(
+        "model = models/knife.glb\nattack_clip = Slash\nattack_interpolation = linear\n"
+        "attack_key = 0 0 0 0 0 0 0\nattack_key = 1 1 0 0 0 30 0\n"), weapon_range::knife_index);
+    require(knife.attack_clip == "Slash" && knife.animation_file == knife.model_file &&
+            knife.presentation.definition().interpolation == weapon_library::PoseInterpolation::Smooth &&
+            same(knife.presentation.sample_attack(0.5).offset, {0.5, 0, 0}), "Attack animation configuration was ignored");
 }
 } // namespace
 
