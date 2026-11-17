@@ -1,0 +1,14 @@
+# Paths are relative to this file. Empty model uses the built-in shape.
+model =
+model_scale = 1 1 1
+model_offset = 0 0 0
+model_rotation = 0 0 0
+hip_offset = 0.24 -0.22 0.58
+aimed_offset = 0 -0.065 0.5
+muzzle_offset = 0 0 0.22
+reload_interpolation = smooth
+# progress / local offset (metres) / rotation XYZ (degrees)
+reload_key = 0    0 0 0           0 0 0
+reload_key = 0.2  -0.04 0.06 0.02  0 0 22
+reload_key = 0.65 -0.04 0.06 0.02  0 0 25
+reload_key = 1    0 0 0           0 0 0

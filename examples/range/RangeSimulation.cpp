@@ -128,7 +128,12 @@ const std::array<WeaponSpec, 3>& weapon_specs() {
     return specs;
 }
 
-RangeSimulation::RangeSimulation() { reset(); }
+RangeSimulation::RangeSimulation() {
+    weapon_library::PresentationDefinition pistol;
+    pistol.muzzle_offset.z = 0.22;
+    presentation_[0] = weapon_library::WeaponPresentation(std::move(pistol));
+    reset();
+}
 
 void RangeSimulation::reset() {
     using namespace weapon_library;
@@ -205,14 +210,21 @@ WeaponPose RangeSimulation::weapon_pose() const {
     return weapon_pose(selected_);
 }
 
+void RangeSimulation::set_presentation(unsigned index, weapon_library::WeaponPresentation presentation) {
+    if (index >= presentation_.size()) throw std::invalid_argument("Unknown range weapon");
+    presentation_[index] = std::move(presentation);
+}
+
 WeaponPose RangeSimulation::weapon_pose(unsigned weapon_index) const {
     const auto forward = handling_[weapon_index]->recoiled_direction(view_direction(yaw_, pitch_));
     const auto right = weapon_library::math::normalized(weapon_library::math::cross(forward, {0, 1, 0}));
     const auto up = weapon_library::math::cross(right, forward);
     const double ads = handling_[weapon_index]->state().aim_fraction;
-    const auto origin = eye_ + forward * (0.58 - 0.08 * ads) + right * (0.24 * (1.0 - ads)) +
-                        up * (-0.22 + 0.155 * ads);
-    return {origin, origin + forward * (weapon_index == 0 ? 0.22 : 0.4), forward, right, up};
+    const auto& presentation = presentation_[weapon_index];
+    const auto offset = presentation.mount_offset(ads);
+    const auto muzzle = presentation.definition().muzzle_offset;
+    const auto origin = eye_ + right * offset.x + up * offset.y + forward * offset.z;
+    return {origin, origin + right * muzzle.x + up * muzzle.y + forward * muzzle.z, forward, right, up};
 }
 
 void RangeSimulation::set_movement(double forward, double strafe) {

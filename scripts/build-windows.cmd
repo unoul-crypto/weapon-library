@@ -21,7 +21,7 @@ if /I not "%~1"=="--run" exit /b 0
 set "RANGE_EXE=%RANGE_ROOT%\build\native\Release\weapon_library_range.exe"
 if not exist "%RANGE_EXE%" set "RANGE_EXE=%RANGE_ROOT%\build\native\weapon_library_range.exe"
 if not exist "%RANGE_EXE%" exit /b 1
-start "" /D "%RANGE_ROOT%" "%RANGE_EXE%"
+start "" /D "%RANGE_ROOT%" "%RANGE_EXE%" --visuals "%RANGE_ROOT%\examples\range\visuals"
 exit /b 0
 
 :missing_tools

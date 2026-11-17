@@ -19,8 +19,9 @@ struct KeyPresses {
     bool contains(int key) const { return std::find(keys.begin(), keys.end(), key) != keys.end(); }
 };
 
-int smoke(const char* screenshot, bool water, bool reload) {
+int smoke(const char* screenshot, bool water, bool reload, weapon_range::RangeRenderer& renderer) {
     weapon_range::RangeSimulation range;
+    const bool visuals_loaded = renderer.reload_visuals(range);
     bool okay;
     if (reload) {
         range.select_weapon(1);
@@ -53,7 +54,12 @@ int smoke(const char* screenshot, bool water, bool reload) {
         range.set_trigger(false);
         okay = range.shots() == 4 && range.hits() == 4 && range.weapon_state().rounds_remaining == 26;
     }
-    for (int frame = 0; frame < 4; ++frame) weapon_range::draw_range(range, true, water);
+    if (reload) {
+        // Refresh assets midway through reload, as with F5: no gameplay reset.
+        okay = renderer.reload_visuals(range) && okay && range.weapon_state().reload.active &&
+               range.weapon_state().rounds_remaining == 27 && range.reserve_rounds() == 150;
+    }
+    for (int frame = 0; frame < 4; ++frame) renderer.draw(range, true, water);
     const auto path = std::filesystem::path(screenshot);
     if (!path.parent_path().empty()) std::filesystem::create_directories(path.parent_path());
     Image image = LoadImageFromScreen();
@@ -61,13 +67,14 @@ int smoke(const char* screenshot, bool water, bool reload) {
     UnloadImage(image);
     if (reload) {
         range.advance(1.0);
+        renderer.draw(range, true, false); // Completed reload restores the clip's ready frame.
         okay = okay && !range.weapon_state().reload.active && range.weapon_state().rounds_remaining == 30 &&
                range.reserve_rounds() == 147 && range.shots() == 3;
     }
     std::printf("Range smoke (%s): shots=%u hits=%u ammo=%u flight=%.2fms impact=%.2fm/s screenshot=%s\n",
                 reload ? "reload" : water ? "water" : "air", range.shots(), range.hits(), range.weapon_state().rounds_remaining,
                 range.last_flight_seconds() * 1000.0, range.last_impact_speed(), exported ? "saved" : "failed");
-    return okay && exported ? 0 : 1;
+    return okay && exported && visuals_loaded ? 0 : 1;
 }
 
 } // namespace
@@ -82,13 +89,20 @@ int main(int argc, char** argv) {
     SetWindowMinSize(1040, 680);
     SetExitKey(KEY_NULL);
     SetTargetFPS(120);
+    auto visual_directory = std::filesystem::path(GetApplicationDirectory()) / "visuals";
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--visuals") == 0 && i + 1 < argc) visual_directory = argv[++i];
+    }
+    auto renderer = std::make_unique<weapon_range::RangeRenderer>(visual_directory);
     if (testing) {
-        const int result = smoke(argc >= 3 ? argv[2] : "build/qa/range.png", water_test, reload_test);
+        const int result = smoke(argc >= 3 ? argv[2] : "build/qa/range.png", water_test, reload_test, *renderer);
+        renderer.reset();
         CloseWindow();
         return result;
     }
 
     weapon_range::RangeSimulation range;
+    renderer->reload_visuals(range);
     bool playing = false, armed = false, slow_motion = false;
     double accumulated = 0.0;
     const auto pause = [&] {
@@ -102,6 +116,7 @@ int main(int argc, char** argv) {
         // GLFW can deliver key-down and key-up in one polling pass. The key
         // queue preserves such taps, unlike checking only the final key state.
         const KeyPresses pressed;
+        if (pressed.contains(KEY_F5)) renderer->reload_visuals(range);
         const bool fire_down = IsMouseButtonDown(MOUSE_BUTTON_LEFT) || IsKeyDown(KEY_F);
         if (!IsWindowFocused()) pause();
         if (pressed.contains(KEY_ESCAPE)) pause();
@@ -149,9 +164,10 @@ int main(int argc, char** argv) {
                 accumulated -= tick;
             }
         }
-        weapon_range::draw_range(range, playing, slow_motion);
+        renderer->draw(range, playing, slow_motion);
     }
     EnableCursor();
+    renderer.reset();
     CloseWindow();
     return 0;
 }

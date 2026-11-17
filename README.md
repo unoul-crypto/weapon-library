@@ -1,4 +1,4 @@
-# Weapon Library v0.6.0
+# Weapon Library v0.7.0
 
 A small C++17 foundation for reusable weapon mechanics. The core has no external
 dependencies, graphics, physics engine, platform calls or wall-clock access.
@@ -17,6 +17,8 @@ dependencies, graphics, physics engine, platform calls or wall-clock access.
 - One ordered stream of action transitions and shot events.
 - Independent aiming, seeded spread, shot bloom and accumulating/recovering recoil.
 - Interruptible reload actions, finite reserves and an atomic ammunition-source contract.
+- Engine-independent weapon mounts and configurable reload keyframe poses.
+- Range adapter for custom OBJ/GLB/GLTF models and named skeletal reload clips.
 - An optional interactive 3D firing range, with separate game logic and rendering.
 - An independent ballistics module: finite-speed projectiles, gravity, flow-relative
   air/water resistance, swept queries and medium transitions within an update.
@@ -89,6 +91,7 @@ increase the target hit counter. Use V to inspect the drop.
 | 1 / 2 / 3 | Select pistol / rifle / turret firing configuration |
 | R | Reload from this weapon's reserve |
 | Q | Cancel reload without spending reserve ammo |
+| F5 | Reload weapon models and animation settings without resetting the session |
 | Home | Reset the entire practice session: ammo, reserves, pose, targets and statistics |
 | V | Toggle 0.1x slow motion to inspect trajectories and medium transitions |
 | Escape | Pause and release the mouse |
@@ -101,6 +104,13 @@ Focus loss pauses the simulation and releases the mouse. Reload transfers happen
 only on completion; switching cancels reload and preserves loaded/reserve rounds.
 The HUD shows reserve ammo and reload progress. The turret preset
 tests automatic firing with a larger magazine; it uses the same handheld demo view.
+
+Edit `examples/range/visuals/pistol.weapon`, `rifle.weapon` or `turret.weapon`
+to replace the model, adjust its transform, align the muzzle and customize reload
+keyframes or a skeletal clip. The rifle includes an original glTF model with an
+animated magazine. The launchers read these source configs; press F5 to apply edits.
+See [model and animation customization](docs/presentation.md) for the file format
+and reusable library API.
 
 The demo is OFF by default. Enabling it fetches pinned raylib 5.5; the library and
 headless tests still build without graphics or downloads. To reuse an existing

@@ -3,6 +3,7 @@
 #include <weapon_library/FiringMechanism.h>
 #include <weapon_library/Ballistics.h>
 #include <weapon_library/WeaponHandling.h>
+#include <weapon_library/WeaponPresentation.h>
 
 #include <array>
 #include <memory>
@@ -83,6 +84,8 @@ public:
     Vec3 eye() const noexcept { return eye_; }
     Vec3 aim() const;
     WeaponPose weapon_pose() const;
+    void set_presentation(unsigned index, weapon_library::WeaponPresentation presentation);
+    const weapon_library::WeaponPresentation& presentation() const { return presentation_[selected_]; }
     weapon_library::HandlingState handling_state() const;
     double time() const noexcept { return time_; }
     unsigned selected_weapon() const noexcept { return selected_; }
@@ -119,6 +122,7 @@ private:
     std::array<std::unique_ptr<weapon_library::FiringMechanism>, 3> weapons_;
     std::array<std::unique_ptr<weapon_library::WeaponHandling>, 3> handling_;
     std::array<std::shared_ptr<weapon_library::AmmunitionReserve>, 3> reserves_;
+    std::array<weapon_library::WeaponPresentation, 3> presentation_;
     std::array<Target, 3> targets_;
     std::vector<ShotTrace> traces_;
     std::vector<RangeProjectile> projectiles_;

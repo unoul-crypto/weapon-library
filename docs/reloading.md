@@ -85,3 +85,6 @@ are 1.2, 1.8 and 2.4 simulation seconds. The HUD shows reserve and progress.
 Reload lowers aim and moves the model; those are scene choices. Previously fired
 projectiles keep flying and statistics are retained. Escape/focus loss pauses the
 operation, and resume continues it without advancing paused time.
+
+Weapon models, reload keyframes and skeletal clips are configurable independently
+of these mechanics. See [presentation customization](presentation.md).

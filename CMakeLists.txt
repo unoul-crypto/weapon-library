@@ -1,12 +1,12 @@
 cmake_minimum_required(VERSION 3.20)
-project(weapon_library VERSION 0.6.0 LANGUAGES CXX)
+project(weapon_library VERSION 0.7.0 LANGUAGES CXX)
 
 option(WEAPON_LIBRARY_BUILD_TESTS "Build headless behavioral tests" OFF)
 option(WEAPON_LIBRARY_BUILD_EXAMPLES "Build the headless example" OFF)
 option(WEAPON_LIBRARY_BUILD_DEMO "Build the interactive raylib firing range" OFF)
 option(WEAPON_LIBRARY_BUILD_BALLISTICS "Build the independent ballistics module" ON)
 
-add_library(weapon_library src/Weapon.cpp src/FiringMechanism.cpp src/WeaponHandling.cpp)
+add_library(weapon_library src/Weapon.cpp src/FiringMechanism.cpp src/WeaponHandling.cpp src/WeaponPresentation.cpp)
 add_library(weapon_library::weapon_library ALIAS weapon_library)
 target_include_directories(weapon_library PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
@@ -36,7 +36,7 @@ elseif(WEAPON_LIBRARY_BUILD_DEMO)
 endif()
 
 if(WEAPON_LIBRARY_BUILD_BALLISTICS AND (WEAPON_LIBRARY_BUILD_DEMO OR WEAPON_LIBRARY_BUILD_TESTS))
-    add_library(weapon_range_core examples/range/RangeSimulation.cpp)
+    add_library(weapon_range_core examples/range/RangeSimulation.cpp examples/range/RangeVisuals.cpp)
     target_include_directories(weapon_range_core PUBLIC examples/range)
     target_link_libraries(weapon_range_core PUBLIC weapon_library::weapon_library weapon_library::ballistics)
 endif()
@@ -55,6 +55,9 @@ if(WEAPON_LIBRARY_BUILD_TESTS)
     add_executable(weapon_library_handling_tests tests/HandlingTests.cpp)
     target_link_libraries(weapon_library_handling_tests PRIVATE weapon_library::weapon_library)
     add_test(NAME weapon_library.handling COMMAND weapon_library_handling_tests)
+    add_executable(weapon_library_presentation_tests tests/PresentationTests.cpp)
+    target_link_libraries(weapon_library_presentation_tests PRIVATE weapon_library::weapon_library)
+    add_test(NAME weapon_library.presentation COMMAND weapon_library_presentation_tests)
     if(WEAPON_LIBRARY_BUILD_BALLISTICS)
         add_executable(weapon_library_ballistics_tests tests/BallisticsTests.cpp)
         target_link_libraries(weapon_library_ballistics_tests PRIVATE weapon_library::ballistics)
@@ -62,6 +65,9 @@ if(WEAPON_LIBRARY_BUILD_TESTS)
         add_executable(weapon_library_range_tests tests/RangeTests.cpp)
         target_link_libraries(weapon_library_range_tests PRIVATE weapon_range_core)
         add_test(NAME weapon_library.range COMMAND weapon_library_range_tests)
+        add_executable(weapon_library_visuals_tests tests/VisualsTests.cpp)
+        target_link_libraries(weapon_library_visuals_tests PRIVATE weapon_range_core)
+        add_test(NAME weapon_library.visuals COMMAND weapon_library_visuals_tests "${CMAKE_CURRENT_SOURCE_DIR}/examples/range/visuals")
     endif()
 endif()
 
@@ -80,6 +86,12 @@ if(WEAPON_LIBRARY_BUILD_DEMO)
         examples/range/main.cpp examples/range/RangeRenderer.cpp)
     target_link_libraries(weapon_library_range PRIVATE weapon_range_core raylib)
     target_compile_definitions(weapon_library_range PRIVATE WEAPON_RANGE_VERSION="${PROJECT_VERSION}")
+    add_custom_target(weapon_range_visuals
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/examples/range/visuals"
+            "$<TARGET_FILE_DIR:weapon_library_range>/visuals"
+        COMMENT "Copying range models and visual settings")
+    add_dependencies(weapon_library_range weapon_range_visuals)
 endif()
 
 if(WEAPON_LIBRARY_BUILD_EXAMPLES)

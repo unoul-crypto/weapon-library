@@ -1,0 +1,12 @@
+model =
+model_scale = 1 1 1
+model_offset = 0 0 0
+model_rotation = 0 0 0
+hip_offset = 0.24 -0.22 0.58
+aimed_offset = 0 -0.065 0.5
+muzzle_offset = 0 0 0.4
+reload_interpolation = smooth
+reload_key = 0    0 0 0           0 0 0
+reload_key = 0.25 -0.05 0.08 0.04  0 12 -18
+reload_key = 0.7  -0.05 0.08 0.04  0 12 -18
+reload_key = 1    0 0 0           0 0 0

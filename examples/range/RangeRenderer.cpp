@@ -1,4 +1,5 @@
 #include "RangeRenderer.h"
+#include "RangeVisuals.h"
 
 #include <raylib.h>
 #include <rlgl.h>
@@ -6,6 +7,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <set>
+#include <stdexcept>
+#include <utility>
 
 namespace weapon_range {
 namespace {
@@ -21,6 +25,74 @@ void centered(const char* value, int x, int y, int size, Color color) {
     text(value, x - MeasureText(value, size) / 2, y, size, color);
 }
 void cube(Vector3 pos, Vector3 size, Color color) { DrawCubeV(pos, size, color); }
+
+struct WeaponAsset {
+    RangeVisualDefinition definition;
+    Model model{};
+    ModelAnimation* animations = nullptr;
+    int animation_count = 0;
+    int reload_clip = -1;
+    int last_frame = -1;
+
+    ~WeaponAsset() {
+        if (animations) UnloadModelAnimations(animations, animation_count);
+        if (model.meshes || model.materials) {
+            // LoadModel owns its textures, but UnloadModel only frees material maps.
+            std::set<unsigned> textures;
+            for (int i = 0; i < model.materialCount; ++i) for (int j = 0; j <= MATERIAL_MAP_BRDF; ++j) {
+                const auto texture = model.materials[i].maps[j].texture;
+                if (texture.id != 0 && texture.id != rlGetTextureIdDefault() && textures.insert(texture.id).second)
+                    UnloadTexture(texture);
+            }
+            UnloadModel(model);
+        }
+    }
+
+    void load() {
+        if (definition.model_file.empty()) return;
+        const auto path = definition.model_file.string();
+        if (!std::filesystem::is_regular_file(definition.model_file))
+            throw std::runtime_error("Model file not found: " + definition.model_file.filename().string());
+        if (!IsFileExtension(path.c_str(), ".obj;.glb;.gltf"))
+            throw std::runtime_error("Supported model formats: OBJ, GLB, GLTF");
+        model = LoadModel(path.c_str());
+        if (!IsModelValid(model)) throw std::runtime_error("Cannot load model: " + definition.model_file.filename().string());
+        if (definition.reload_clip.empty()) return;
+        if (!std::filesystem::is_regular_file(definition.animation_file))
+            throw std::runtime_error("Animation file not found");
+        animations = LoadModelAnimations(definition.animation_file.string().c_str(), &animation_count);
+        for (int i = 0; i < animation_count; ++i) {
+            if (definition.reload_clip == animations[i].name) { reload_clip = i; break; }
+        }
+        if (reload_clip < 0) throw std::runtime_error("Reload clip not found: " + definition.reload_clip);
+        const auto& clip = animations[reload_clip];
+        if (model.boneCount == 0 || clip.frameCount < 1 || !IsModelAnimationValid(model, clip))
+            throw std::runtime_error("Reload clip skeleton does not match the model");
+        for (int i = 0; i < model.boneCount; ++i) {
+            if (std::string(model.bones[i].name) != clip.bones[i].name)
+                throw std::runtime_error("Reload clip bone names do not match the model");
+        }
+    }
+
+    void animate(const weapon_library::ReloadState& reload) {
+        if (reload_clip < 0) return;
+        const auto& clip = animations[reload_clip];
+        const double progress = weapon_library::WeaponPresentation::reload_progress(reload);
+        const int frame = static_cast<int>(std::round(progress * (clip.frameCount - 1)));
+        if (frame != last_frame) {
+            UpdateModelAnimation(model, clip, frame);
+            last_frame = frame;
+        }
+    }
+};
+
+void transform_pose(const weapon_library::PresentationPose& pose) {
+    rlTranslatef(static_cast<float>(pose.offset.x), static_cast<float>(pose.offset.y), static_cast<float>(pose.offset.z));
+    // Local vertices are rotated X, then Y, then Z, then translated.
+    rlRotatef(static_cast<float>(pose.rotation_degrees.z), 0, 0, 1);
+    rlRotatef(static_cast<float>(pose.rotation_degrees.y), 0, 1, 0);
+    rlRotatef(static_cast<float>(pose.rotation_degrees.x), 1, 0, 0);
+}
 
 const char* result_label(ShotOutcome outcome) {
     switch (outcome) {
@@ -142,7 +214,7 @@ void draw_target_labels(const RangeSimulation& range, Camera3D camera) {
     }
 }
 
-void draw_held_weapon(const RangeSimulation& range) {
+void draw_held_weapon(const RangeSimulation& range, WeaponAsset& asset) {
     const auto pose = range.weapon_pose();
     const auto aim = pose.forward, right = pose.right, up = pose.up;
     const double age = range.time() - range.last_shot_time();
@@ -158,23 +230,26 @@ void draw_held_weapon(const RangeSimulation& range) {
     rlDisableBackfaceCulling();
     rlMultMatrixf(matrix);
     const auto reload = range.weapon_state().reload;
-    if (reload.active) {
-        const double progress = reload.waiting_for_action || reload.duration_seconds == 0.0 ? 0.0 :
-                                std::clamp(1.0 - reload.remaining_seconds / reload.duration_seconds, 0.0, 1.0);
-        const float motion = static_cast<float>(std::sin(progress * 3.141592653589793));
-        rlTranslatef(0, -0.14f * motion, -0.1f * motion);
-        rlRotatef(25.0f * motion, 0, 0, 1);
-    }
-    rlScalef(static_cast<float>(1.0 - 0.25 * range.handling_state().aim_fraction), 1.0f, 1.0f);
+    transform_pose(asset.definition.presentation.reload_pose(reload));
+    asset.animate(reload);
     const bool pistol = range.selected_weapon() == 0;
-    cube({0, 0, 0}, {0.11f, 0.1f, pistol ? 0.24f : 0.4f}, {65, 79, 87, 255});
-    cube({0, -0.1f, -0.06f}, {0.09f, 0.17f, 0.1f}, {29, 40, 49, 255});
-    cube({0, 0.04f, 0.02f}, {0.085f, 0.025f, pistol ? 0.23f : 0.42f}, {108, 127, 135, 255});
-    cube({0, 0, pistol ? 0.15f : 0.27f}, {0.055f, 0.055f, pistol ? 0.1f : 0.2f}, {25, 35, 44, 255});
-    cube({0, 0.06f, 0.1f}, {0.004f, 0.01f, 0.01f}, accent);
-    if (!pistol) cube({0, -0.1f, 0.06f}, {0.07f, 0.19f, 0.1f}, {36, 49, 57, 255});
+    if (asset.model.meshCount) {
+        rlPushMatrix();
+        const auto& transform = asset.definition.model_transform;
+        transform_pose({transform.offset, transform.rotation_degrees});
+        rlScalef(static_cast<float>(transform.scale.x), static_cast<float>(transform.scale.y), static_cast<float>(transform.scale.z));
+        DrawModel(asset.model, {0, 0, 0}, 1.0f, WHITE);
+        rlPopMatrix();
+    } else {
+        cube({0, 0, 0}, {0.11f, 0.1f, pistol ? 0.24f : 0.4f}, {65, 79, 87, 255});
+        cube({0, -0.1f, -0.06f}, {0.09f, 0.17f, 0.1f}, {29, 40, 49, 255});
+        cube({0, 0.04f, 0.02f}, {0.085f, 0.025f, pistol ? 0.23f : 0.42f}, {108, 127, 135, 255});
+        cube({0, 0, pistol ? 0.15f : 0.27f}, {0.055f, 0.055f, pistol ? 0.1f : 0.2f}, {25, 35, 44, 255});
+        cube({0, 0.06f, 0.1f}, {0.004f, 0.01f, 0.01f}, accent);
+        if (!pistol) cube({0, -0.1f, 0.06f}, {0.07f, 0.19f, 0.1f}, {36, 49, 57, 255});
+    }
     if (age >= 0 && age < 0.045) {
-        DrawSphere({0, 0, pistol ? 0.22f : 0.4f}, 0.05f, {255, 218, 136, 255});
+        DrawSphere(rv(asset.definition.presentation.definition().muzzle_offset), 0.05f, {255, 218, 136, 255});
     }
     rlPopMatrix();
     rlEnableBackfaceCulling();
@@ -237,8 +312,7 @@ void draw_hud(const RangeSimulation& range, bool playing, bool slow_motion) {
     text(buffer, 40, bottom + 98, 16, teal);
     if (state.reload.active) {
         DrawRectangle(24, bottom - 45, 310, 37, panel);
-        const double progress = state.reload.waiting_for_action || state.reload.duration_seconds == 0.0 ? 0.0 :
-            std::clamp(1.0 - state.reload.remaining_seconds / state.reload.duration_seconds, 0.0, 1.0);
+        const double progress = weapon_library::WeaponPresentation::reload_progress(state.reload);
         std::snprintf(buffer, sizeof(buffer), "RELOADING  %03.0f%%  /  Q CANCEL", progress * 100.0);
         text(state.reload.waiting_for_action ? "FINISHING SHOT..." : buffer, 36, bottom - 35, 16, accent);
         DrawRectangle(24, bottom - 11, static_cast<int>(310 * progress), 3, accent);
@@ -262,7 +336,7 @@ void draw_hud(const RangeSimulation& range, bool playing, bool slow_motion) {
         centered(weapon_specs()[i].name, x + 53, bottom + 120, 16, selected ? accent : white);
     }
     DrawRectangle(0, height - 34, width, 34, ink);
-    centered("WASD MOVE  RMB AIM  LMB/F FIRE  R RELOAD  Q CANCEL  1-3 WEAPON  V SLOW  HOME RESET  ESC PAUSE", width / 2, height - 23, width < 1200 ? 12 : 14, muted);
+    centered("WASD MOVE  RMB AIM  LMB/F FIRE  R RELOAD  Q CANCEL  1-3 WEAPON  V SLOW  F5 VISUALS  HOME RESET  ESC PAUSE", width / 2, height - 23, width < 1200 ? 11 : 13, muted);
     const int cx = width / 2, cy = height / 2;
     const bool hit = range.time() - range.last_hit_time() < 0.16;
     const Color cross = hit ? accent : teal;
@@ -293,7 +367,40 @@ void draw_hud(const RangeSimulation& range, bool playing, bool slow_motion) {
 
 } // namespace
 
-void draw_range(const RangeSimulation& range, bool playing, bool slow_motion) {
+struct RangeRenderer::Impl {
+    std::array<std::unique_ptr<WeaponAsset>, 3> assets;
+    explicit Impl(const std::filesystem::path* directory = nullptr) {
+        const char* files[] = {"pistol.weapon", "rifle.weapon", "turret.weapon"};
+        for (unsigned i = 0; i < assets.size(); ++i) {
+            assets[i] = std::make_unique<WeaponAsset>();
+            assets[i]->definition = directory ? load_visual(*directory / files[i], i) : default_visual(i);
+            assets[i]->load();
+        }
+    }
+};
+
+RangeRenderer::RangeRenderer(std::filesystem::path directory)
+    : config_directory_(std::move(directory)), impl_(std::make_unique<Impl>()) {}
+RangeRenderer::~RangeRenderer() = default;
+
+bool RangeRenderer::reload_visuals(RangeSimulation& range) {
+    try {
+        auto replacement = std::make_unique<Impl>(&config_directory_);
+        for (unsigned i = 0; i < replacement->assets.size(); ++i)
+            range.set_presentation(i, replacement->assets[i]->definition.presentation);
+        impl_ = std::move(replacement);
+        status_ = "VISUALS LOADED / F5 TO REFRESH";
+        config_error_ = false;
+        return true;
+    } catch (const std::exception& error) {
+        status_ = std::string("VISUAL CONFIG ERROR: ") + error.what();
+        config_error_ = true;
+        std::fprintf(stderr, "%s\n", status_.c_str());
+        return false;
+    }
+}
+
+void RangeRenderer::draw(const RangeSimulation& range, bool playing, bool slow_motion) {
     Camera3D camera{};
     camera.position = rv(range.eye());
     camera.target = rv(range.eye() + range.aim());
@@ -316,11 +423,12 @@ void draw_range(const RangeSimulation& range, bool playing, bool slow_motion) {
         DrawSphere(rv(state.position), 0.045f, water ? teal : Color{255, 231, 164, 255});
     }
     draw_impact_marks(range);
-    draw_held_weapon(range);
+    draw_held_weapon(range, *impl_->assets[range.selected_weapon()]);
     EndMode3D();
     draw_target_labels(range, camera);
     draw_last_miss_label(range, camera);
     draw_hud(range, playing, slow_motion);
+    DrawText(status_.c_str(), 29, 174, 12, config_error_ ? miss : muted);
     EndDrawing();
 }
 

@@ -41,6 +41,6 @@ if ($Test) {
 if ($Run) {
     $demoExe = Join-Path $buildDir 'Release/weapon_library_range.exe'
     if (-not (Test-Path -LiteralPath $demoExe)) { $demoExe = Join-Path $buildDir 'weapon_library_range.exe' }
-    & $demoExe
+    & $demoExe --visuals (Join-Path $projectRoot 'examples/range/visuals')
     if ($LASTEXITCODE -ne 0) { throw 'Demo failed.' }
 }
