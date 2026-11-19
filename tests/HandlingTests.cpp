@@ -93,6 +93,39 @@ void aimed_and_moving_shots_have_different_accuracy() {
             "Actual shot directions did not reflect the different accuracy");
 }
 
+void aimed_sway_moves_the_shot_center_smoothly() {
+    constexpr Vec3 forward{0, 0, -1};
+    auto definition = no_kick();
+    definition.hip_spread_rad = definition.aimed_spread_rad = 0.0;
+    definition.aimed_sway_amplitude_rad = {0.005, 0.003};
+    WeaponHandling sway(definition), split(definition);
+    require(same(sway.shot_center_direction(forward), forward), "Aim sway applied at hip fire");
+    sway.set_aiming(true);
+    split.set_aiming(true);
+    require(same(sway.shot_center_direction(forward), forward), "Aim sway jumped at the start of ADS");
+    sway.advance(0.37);
+    for (int i = 0; i < 37; ++i) split.advance(0.01);
+    const auto center = sway.shot_center_direction(forward);
+    require(!same(center, forward) && same(center, split.shot_center_direction(forward)) &&
+            same(sway.recoiled_direction(forward), forward), "Aim sway did not follow simulation time independently of camera aim");
+    const auto shot = sway.sample_shot(forward);
+    require(shot.spread_half_angle_rad == 0.0 && same(shot.direction, center),
+            "A zero-spread shot missed the swaying cone center");
+    sway.advance(0.2);
+    const auto later = sway.shot_center_direction(forward);
+    require(!same(later, center), "Stationary aimed weapon lost time-based sway");
+    sway.set_aiming(false);
+    require(same(sway.shot_center_direction(forward), later), "Aim sway snapped on release");
+    sway.advance(0.15);
+    require(same(sway.shot_center_direction(forward), forward), "Aim sway remained after leaving ADS");
+
+    definition.aimed_sway_frequency_hz = 0.0;
+    WeaponHandling disabled(definition);
+    disabled.set_aiming(true);
+    disabled.advance(0.37);
+    require(same(disabled.shot_center_direction(forward), forward), "Zero frequency did not disable aim sway");
+}
+
 void bloom_and_recoil_apply_after_the_shot_and_recover() {
     HandlingDefinition d;
     d.hip_spread_rad = d.aimed_spread_rad = 0;
@@ -268,6 +301,7 @@ int main() {
         {"ADS transitions", aiming_is_smooth_interruptible_and_can_be_instant},
         {"Seeded cone sampling", spread_is_seeded_bounded_and_centered},
         {"Aim and movement accuracy", aimed_and_moving_shots_have_different_accuracy},
+        {"ADS aim sway", aimed_sway_moves_the_shot_center_smoothly},
         {"Bloom and recoil", bloom_and_recoil_apply_after_the_shot_and_recover},
         {"Frame partition", recovery_and_randomness_are_independent_of_frame_partition},
         {"Shot timestamps", catch_up_shots_use_their_individual_times},

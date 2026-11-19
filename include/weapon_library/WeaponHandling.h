@@ -12,6 +12,18 @@ struct AngularOffset {
     double pitch_rad = 0.0; // Positive pitches the aim upwards.
 };
 
+class AimSwaySettings {
+public:
+    AimSwaySettings() = default;
+    AimSwaySettings(AngularOffset amplitude_rad, double frequency_hz);
+    AngularOffset amplitude_rad() const noexcept { return amplitude_rad_; }
+    double frequency_hz() const noexcept { return frequency_hz_; }
+
+private:
+    AngularOffset amplitude_rad_;
+    double frequency_hz_ = 0.55;
+};
+
 struct HandlingDefinition {
     double aim_in_seconds = 0.2;
     double aim_out_seconds = 0.15;
@@ -27,6 +39,8 @@ struct HandlingDefinition {
     double aimed_recoil_multiplier = 0.65;
     AngularOffset max_recoil_rad{0.06, 0.14};
     double recoil_return_rate = 6.0; // Exponential decay rate, per second.
+    AngularOffset aimed_sway_amplitude_rad; // Peak angular drift at full ADS.
+    double aimed_sway_frequency_hz = 0.55; // Yaw cycles per second; zero disables sway.
 };
 
 struct HandlingState {
@@ -37,6 +51,7 @@ struct HandlingState {
     double bloom_rad = 0.0;
     AngularOffset recoil;
     double spread_half_angle_rad = 0.0;
+    AngularOffset aim_sway;
 };
 
 struct SpreadContext {
@@ -66,6 +81,8 @@ public:
     HandlingState state() const;
     // An empty model restores the built-in formula. Invalid replacements leave the previous model installed.
     void set_spread_model(SpreadModel model);
+    // Re-evaluates sway at the current simulation time. Retains aim, recoil, bloom and RNG state.
+    void set_aim_sway(AimSwaySettings settings) noexcept;
     void set_aiming(bool aiming) noexcept;
     void set_movement_factor(double factor);
     void advance(double seconds);
@@ -73,11 +90,14 @@ public:
     // A finite nonzero up hint establishes local yaw/pitch; parallel hints get
     // a stable fallback basis. Invalid directions do not consume RNG or kick.
     math::Vec3 recoiled_direction(math::Vec3 aim, math::Vec3 up_hint = {0, 1, 0}) const;
+    // The center of the spread cone, including recoil and ADS sway.
+    math::Vec3 shot_center_direction(math::Vec3 aim, math::Vec3 up_hint = {0, 1, 0}) const;
     HandledShot sample_shot(math::Vec3 aim, math::Vec3 up_hint = {0, 1, 0});
 
 private:
     double spread(const SpreadModel& model) const;
     double random_unit() noexcept;
+    void update_aim_sway() noexcept;
     HandlingDefinition definition_;
     HandlingState state_;
     std::uint32_t random_state_;

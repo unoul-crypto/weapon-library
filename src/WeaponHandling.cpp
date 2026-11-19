@@ -29,7 +29,21 @@ Basis kicked(Basis b, AngularOffset offset) {
     return {forward * std::cos(offset.pitch_rad) + b.up * std::sin(offset.pitch_rad), right,
             b.up * std::cos(offset.pitch_rad) - forward * std::sin(offset.pitch_rad)};
 }
+
+Basis shot_basis(math::Vec3 aim, math::Vec3 up_hint, const HandlingState& state) {
+    return kicked(kicked(basis(aim, up_hint), state.recoil), state.aim_sway);
+}
+
 bool multiplier(double value) { return std::isfinite(value) && value >= 0.0 && value <= 1.0; }
+}
+
+AimSwaySettings::AimSwaySettings(AngularOffset amplitude_rad, double frequency_hz)
+    : amplitude_rad_(amplitude_rad), frequency_hz_(frequency_hz) {
+    if (!detail::valid_duration(frequency_hz))
+        throw std::invalid_argument("Aim sway frequency must be finite and nonnegative");
+    if (!detail::valid_duration(amplitude_rad.yaw_rad) || amplitude_rad.yaw_rad >= pi * 0.5 ||
+        !detail::valid_duration(amplitude_rad.pitch_rad) || amplitude_rad.pitch_rad >= pi * 0.5)
+        throw std::invalid_argument("Aim sway amplitudes must be finite and in [0, pi/2) radians");
 }
 
 WeaponHandling::WeaponHandling(HandlingDefinition definition, std::uint32_t seed, SpreadModel spread_model)
@@ -49,6 +63,7 @@ WeaponHandling::WeaponHandling(HandlingDefinition definition, std::uint32_t seed
         definition.max_recoil_rad.yaw_rad >= pi * 0.5 || definition.max_recoil_rad.pitch_rad >= pi * 0.5) {
         throw std::invalid_argument("Invalid handling multipliers, recoil or spread cone");
     }
+    set_aim_sway({definition.aimed_sway_amplitude_rad, definition.aimed_sway_frequency_hz});
     set_spread_model(std::move(spread_model));
 }
 
@@ -81,6 +96,13 @@ void WeaponHandling::set_aiming(bool aiming) noexcept {
     state_.aiming = aiming;
     if (aiming && definition_.aim_in_seconds == 0.0) state_.aim_fraction = 1.0;
     if (!aiming && definition_.aim_out_seconds == 0.0) state_.aim_fraction = 0.0;
+    update_aim_sway();
+}
+
+void WeaponHandling::set_aim_sway(AimSwaySettings settings) noexcept {
+    definition_.aimed_sway_amplitude_rad = settings.amplitude_rad();
+    definition_.aimed_sway_frequency_hz = settings.frequency_hz();
+    update_aim_sway();
 }
 
 void WeaponHandling::set_movement_factor(double factor) {
@@ -104,6 +126,23 @@ void WeaponHandling::advance(double seconds) {
     state_.recoil.yaw_rad *= decay;
     state_.recoil.pitch_rad *= decay;
     state_.time_seconds += seconds;
+    update_aim_sway();
+}
+
+void WeaponHandling::update_aim_sway() noexcept {
+    const auto amplitude = definition_.aimed_sway_amplitude_rad;
+    const double frequency = definition_.aimed_sway_frequency_hz;
+    if (state_.aim_fraction == 0.0 || frequency == 0.0 || (amplitude.yaw_rad == 0.0 && amplitude.pitch_rad == 0.0)) {
+        state_.aim_sway = {};
+        return;
+    }
+    // Wrap time before multiplying so long sessions and large finite steps keep bounded phases.
+    // Pitch uses three cycles per two yaw cycles, so both axes are continuous at the wrap.
+    const double phase = (std::fmod(state_.time_seconds, 2.0 / frequency) * frequency) * (2.0 * pi);
+    state_.aim_sway = {
+        amplitude.yaw_rad * std::sin(phase) * state_.aim_fraction,
+        amplitude.pitch_rad * std::sin(1.5 * phase + pi / 4.0) * state_.aim_fraction
+    };
 }
 
 double WeaponHandling::random_unit() noexcept {
@@ -118,8 +157,12 @@ math::Vec3 WeaponHandling::recoiled_direction(math::Vec3 aim, math::Vec3 up_hint
     return kicked(basis(aim, up_hint), state_.recoil).forward;
 }
 
+math::Vec3 WeaponHandling::shot_center_direction(math::Vec3 aim, math::Vec3 up_hint) const {
+    return shot_basis(aim, up_hint, state_).forward;
+}
+
 HandledShot WeaponHandling::sample_shot(math::Vec3 aim, math::Vec3 up_hint) {
-    const auto b = kicked(basis(aim, up_hint), state_.recoil); // Validate before state/RNG changes.
+    const auto b = shot_basis(aim, up_hint, state_); // Validate before state/RNG changes.
     const double cone = spread(spread_model_);
     // Uniform solid-angle cone around the current aim, independent of the renderer.
     const double sin_half_angle = std::sqrt(random_unit()) * std::sin(cone * 0.5);

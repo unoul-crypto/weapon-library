@@ -87,8 +87,10 @@ public:
 
     Vec3 eye() const noexcept { return eye_; }
     Vec3 aim() const;
+    Vec3 shot_center_direction() const;
     WeaponPose weapon_pose() const;
     void set_presentation(unsigned index, weapon_library::WeaponPresentation presentation);
+    void set_aim_sway(unsigned index, weapon_library::AimSwaySettings settings);
     const weapon_library::WeaponPresentation& presentation() const { return presentation_[selected_]; }
     weapon_library::PresentationPose sway_pose() const;
     weapon_library::HandlingState handling_state() const;
@@ -135,6 +137,7 @@ private:
     std::array<std::unique_ptr<weapon_library::WeaponHandling>, weapon_count> handling_;
     std::array<std::shared_ptr<weapon_library::AmmunitionReserve>, 3> reserves_;
     std::array<weapon_library::WeaponPresentation, weapon_count> presentation_;
+    std::array<weapon_library::AimSwaySettings, weapon_count> aim_sway_;
     weapon_library::WeaponSway sway_;
     std::unique_ptr<weapon_library::MeleeMechanism> melee_;
     std::array<Target, 4> targets_;

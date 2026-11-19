@@ -212,6 +212,29 @@ void cover_blocks_the_muzzle_even_when_the_eye_sees_above_it() {
             "Raised muzzle failed to clear cover");
 }
 
+void ranged_shots_follow_the_swaying_reticle() {
+    using weapon_library::math::normalized;
+    using weapon_library::math::dot;
+    weapon_range::RangeSimulation range;
+    range.set_aiming(true);
+    range.advance(0.4);
+    const auto center = range.shot_center_direction();
+    const auto camera = range.aim();
+    const auto spread = range.handling_state().spread_half_angle_rad;
+    require(dot(camera, center) < std::cos(2.0 * spread),
+            "Test pose did not move the reticle beyond the unswayed cone");
+    range.set_trigger(true);
+    require(range.projectiles().size() == 1, "Aimed shot did not spawn");
+    const auto launch = range.projectiles().front().motion.state();
+    const double target_z = range.targets()[1].center.z;
+    const double travel_time = (target_z - launch.position.z) / launch.velocity.z;
+    const auto convergence = launch.position + launch.velocity * travel_time;
+    const auto sight_ray = normalized(convergence - range.eye());
+    require(dot(sight_ray, center) >= std::cos(spread) - 1e-12 &&
+            dot(sight_ray, camera) < std::cos(spread),
+            "Projectile converged on the camera instead of the pre-shot reticle cone");
+}
+
 void range_handling_preserves_catch_up_timing_and_ignores_dry_fire() {
     weapon_range::RangeSimulation single, partitioned;
     for (auto* range : {&single, &partitioned}) {
@@ -401,6 +424,7 @@ int main() {
         aim_movement_and_room_bounds();
         water_and_weapon_speed_affect_flight();
         aiming_recoil_and_muzzle_are_connected();
+        ranged_shots_follow_the_swaying_reticle();
         cover_blocks_the_muzzle_even_when_the_eye_sees_above_it();
         range_handling_preserves_catch_up_timing_and_ignores_dry_fire();
         reload_preserves_scene_stats_and_ammunition();

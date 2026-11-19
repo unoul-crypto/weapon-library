@@ -224,6 +224,7 @@ const std::array<WeaponSpec, 3>& weapon_specs() {
         }};
         values[0].handling.recoil_per_shot.pitch_rad = 0.012;
         values[0].handling.bloom_per_shot_rad = 0.004;
+        values[0].handling.aimed_sway_amplitude_rad = {0.0045, 0.003};
         values[0].reserve_rounds = 60;
         values[0].reload_seconds = 1.2;
         values[1].handling.hip_spread_rad = 0.025;
@@ -231,6 +232,7 @@ const std::array<WeaponSpec, 3>& weapon_specs() {
         values[1].handling.recoil_yaw_jitter_rad = 0.0025;
         values[1].handling.bloom_per_shot_rad = 0.0022;
         values[1].handling.recoil_return_rate = 5.0;
+        values[1].handling.aimed_sway_amplitude_rad = {0.0035, 0.0025};
         values[1].reserve_rounds = 150;
         values[1].reload_seconds = 1.8;
         values[2].handling.hip_spread_rad = 0.014;
@@ -239,6 +241,7 @@ const std::array<WeaponSpec, 3>& weapon_specs() {
         values[2].handling.recoil_yaw_jitter_rad = 0.001;
         values[2].handling.bloom_per_shot_rad = 0.0015;
         values[2].handling.recoil_return_rate = 4.0;
+        values[2].handling.aimed_sway_amplitude_rad = {0.0018, 0.0012};
         values[2].reserve_rounds = 180;
         values[2].reload_seconds = 2.4;
         return values;
@@ -247,7 +250,11 @@ const std::array<WeaponSpec, 3>& weapon_specs() {
 }
 
 RangeSimulation::RangeSimulation() {
-    for (unsigned i = 0; i < weapon_count; ++i) presentation_[i] = default_visual(i).presentation;
+    for (unsigned i = 0; i < weapon_count; ++i) {
+        auto config = default_visual(i);
+        presentation_[i] = std::move(config.presentation);
+        aim_sway_[i] = config.aim_sway;
+    }
     reset();
 }
 
@@ -263,6 +270,7 @@ void RangeSimulation::reset() {
         reserves_[i] = std::make_shared<AmmunitionReserve>(spec.reserve_rounds);
     }
     handling_[knife_index] = std::make_unique<WeaponHandling>(HandlingDefinition{});
+    for (unsigned i = 0; i < weapon_count; ++i) handling_[i]->set_aim_sway(aim_sway_[i]);
     const auto knife_actions = std::make_shared<const WeaponDefinition>(std::vector<ActionDefinition>{
         {3, 0.16, 0.18, 0.28, {true, true, true}}});
     melee_ = std::make_unique<MeleeMechanism>(knife_actions, MeleeDefinition{3, 1.6, 0.08, 0.0});
@@ -331,6 +339,10 @@ Vec3 RangeSimulation::aim() const {
     return handling_[selected_]->recoiled_direction(view_direction(yaw_, pitch_));
 }
 
+Vec3 RangeSimulation::shot_center_direction() const {
+    return handling_[selected_]->shot_center_direction(view_direction(yaw_, pitch_));
+}
+
 weapon_library::HandlingState RangeSimulation::handling_state() const { return handling_[selected_]->state(); }
 
 WeaponPose RangeSimulation::weapon_pose() const {
@@ -347,15 +359,25 @@ void RangeSimulation::set_presentation(unsigned index, weapon_library::WeaponPre
     presentation_[index] = std::move(presentation);
 }
 
+void RangeSimulation::set_aim_sway(unsigned index, weapon_library::AimSwaySettings settings) {
+    if (index >= aim_sway_.size()) throw std::invalid_argument("Unknown range weapon");
+    aim_sway_[index] = settings;
+    handling_[index]->set_aim_sway(settings);
+}
+
 WeaponPose RangeSimulation::weapon_pose(unsigned weapon_index) const {
-    const auto forward = handling_[weapon_index]->recoiled_direction(view_direction(yaw_, pitch_));
+    const auto base = view_direction(yaw_, pitch_);
+    const auto camera_forward = handling_[weapon_index]->recoiled_direction(base);
+    const auto camera_right = weapon_library::math::normalized(weapon_library::math::cross(camera_forward, {0, 1, 0}));
+    const auto camera_up = weapon_library::math::cross(camera_right, camera_forward);
+    const auto forward = handling_[weapon_index]->shot_center_direction(base);
     const auto right = weapon_library::math::normalized(weapon_library::math::cross(forward, {0, 1, 0}));
     const auto up = weapon_library::math::cross(right, forward);
     const double ads = handling_[weapon_index]->state().aim_fraction;
     const auto& presentation = presentation_[weapon_index];
     const auto offset = presentation.mount_offset(ads);
     const auto muzzle = presentation.definition().muzzle_offset;
-    const auto origin = eye_ + right * offset.x + up * offset.y + forward * offset.z;
+    const auto origin = eye_ + camera_right * offset.x + camera_up * offset.y + camera_forward * offset.z;
     return {origin, origin + right * muzzle.x + up * muzzle.y + forward * muzzle.z, forward, right, up};
 }
 

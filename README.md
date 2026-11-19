@@ -1,4 +1,4 @@
-# Weapon Library v0.11.0
+# Weapon Library v0.13.0
 
 A small C++17 foundation for reusable weapon mechanics. The core has no external
 dependencies, graphics, physics engine, platform calls or wall-clock access.
@@ -21,6 +21,7 @@ dependencies, graphics, physics engine, platform calls or wall-clock access.
 - Interruptible reload actions, finite reserves and an atomic ammunition-source contract.
 - Engine-independent weapon mounts and configurable reload keyframe poses.
 - Weight-based model inertia with separate walk, turn and ADS sway multipliers.
+- Optional ADS aim sway that moves the reticle and the center of the shot cone.
 - Range adapter for custom OBJ/GLB/GLTF models and named skeletal reload clips.
 - A melee mechanism with active-phase sweeps, per-attack entity deduplication,
   blocking contacts and configurable target limits through a game-owned world adapter.
@@ -99,7 +100,8 @@ increase the target hit counter. Use V to inspect the drop.
 | 4 | Select knife; approach the near target to the left of the starting position |
 | R | Reload from this weapon's reserve |
 | Q | Cancel reload or the current knife swing |
-| F5 | Reload weapon models and animation settings without resetting the session |
+| C | Toggle the crosshair and spread ring |
+| F5 | Reload weapon settings without resetting the session |
 | Home | Reset the entire practice session: ammo, reserves, pose, targets and statistics |
 | V | Toggle 0.1x slow motion to inspect trajectories and medium transitions |
 | Escape | Pause and release the mouse |

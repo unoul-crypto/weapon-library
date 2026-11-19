@@ -58,7 +58,9 @@ void configs_and_muzzle(const std::filesystem::path& assets) {
     for (const auto* invalid : {"misspelled = 1\n", "model_scale = 1 0 1\n", "hip_offset = 1 2 3 junk\n",
             "reload_key = 0.5 0 0 0 0 0 0\n", "reload_clip = Reload\n", "model = a.obj\nmodel = b.obj\n",
             "reload_motion = none\nreload_key = 0 0 0 0 0 0 0\n", "mass_kg = -1\n",
-            "walk_sway_multiplier = -1\n", "turn_sway_multiplier = -1\n", "aimed_sway_multiplier = -1\n"}) {
+            "walk_sway_multiplier = -1\n", "turn_sway_multiplier = -1\n", "aimed_sway_multiplier = -1\n",
+            "aimed_sway_amplitude_rad = 0.02\n", "aimed_sway_amplitude_rad = 0.02 2\n",
+            "aimed_sway_frequency_hz = -0.5\n"}) {
         bool rejected = false;
         try { weapon_range::load_visual(fixture.write(invalid), 0); }
         catch (const std::runtime_error& error) {
@@ -112,6 +114,35 @@ void sway_settings_update_existing_motion() {
             same(range.sway_pose().rotation_degrees, aimed.rotation_degrees * 0.25),
             "The configured aimed multiplier was not applied to current movement");
 }
+void aim_sway_config_applies_per_weapon_and_survives_reset() {
+    ConfigFixture fixture;
+    weapon_range::RangeSimulation range;
+    range.set_aiming(true);
+    range.advance(0.5);
+    range.set_trigger(true);
+    range.set_trigger(false);
+    const auto before = range.handling_state();
+    const auto ammo = range.weapon_state().rounds_remaining;
+    const auto config = weapon_range::load_visual(fixture.write(
+        "aimed_sway_amplitude_rad = 0.02 0\naimed_sway_frequency_hz = 0.5\n"), 0);
+    range.set_aim_sway(0, config.aim_sway);
+    const auto after = range.handling_state();
+    require(std::abs(after.aim_sway.yaw_rad - 0.02) < 1e-10 && after.aim_sway.pitch_rad == 0.0 &&
+            after.time_seconds == before.time_seconds && after.aim_fraction == before.aim_fraction &&
+            after.recoil.pitch_rad == before.recoil.pitch_rad && after.bloom_rad == before.bloom_rad &&
+            range.weapon_state().rounds_remaining == ammo && range.shots() == 1,
+            "Reloaded aim sway did not update the active gun in place");
+
+    range.select_weapon(1);
+    range.advance(0.23);
+    require(std::abs(range.handling_state().aim_sway.yaw_rad) <= 0.0035,
+            "Pistol aim sway settings affected the rifle");
+    range.reset();
+    range.set_aiming(true);
+    range.advance(0.5);
+    require(std::abs(range.handling_state().aim_sway.yaw_rad - 0.02) < 1e-10,
+            "Reset restored the old aim sway preset");
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -119,6 +150,7 @@ int main(int argc, char** argv) {
         require(argc == 2, "Expected bundled visual directory");
         configs_and_muzzle(argv[1]);
         sway_settings_update_existing_motion();
+        aim_sway_config_applies_per_weapon_and_survives_reset();
         std::cout << "Visual config and socket tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';

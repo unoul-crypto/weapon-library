@@ -38,6 +38,40 @@ camera's zoom and model position remain presentation choices. `recoiled_directio
 returns the center direction including recoil, without spread. It does not change
 state or consume random numbers.
 
+## ADS aim sway
+
+Set `HandlingDefinition::aimed_sway_amplitude_rad` to the desired peak yaw and
+pitch angles for fully aimed shots. Each amplitude is nonnegative and smaller
+than pi/2 radians. Both default to zero. `aimed_sway_frequency_hz` controls yaw
+cycles per simulation second. Pitch runs at 1.5 times that frequency. A zero
+frequency disables the effect. The smooth oscillation is scaled by aim fraction
+and continues while the character stands still. The current angular offset is
+available as `HandlingState::aim_sway`.
+
+Use `shot_center_direction` to place the reticle. The shot sampler applies the same
+aim offset before sampling the spread cone. In the range, the camera uses
+`recoiled_direction` and the reticle moves within that view. The reticle marks
+the center of the launch cone before spread, flight and collisions. The visual
+model sway multipliers in the `.weapon` file apply to the held model.
+
+Set the following keys in a weapon's `.weapon` file in `examples/range/visuals`
+and press F5 in the range to apply them. This example uses the pistol preset.
+
+```ini
+aimed_sway_amplitude_rad = 0.0045 0.003
+aimed_sway_frequency_hz = 0.55
+```
+
+The amplitude values give horizontal yaw and vertical pitch in that order. Set
+both to zero to disable aim sway. The knife preset has no ADS. Press C to hide
+or show the crosshair and its spread ring. Gameplay uses the same shot center
+regardless of crosshair visibility.
+
+The library also supports live updates through
+`WeaponHandling::set_aim_sway(AimSwaySettings{amplitude, frequency})`. It
+recalculates the offset at the current simulation time and preserves handling
+state, including recoil, bloom and the random sequence.
+
 ## Custom spread logic
 
 `SpreadModel` is an optional `std::function<double(const SpreadContext&)>`. Supply
@@ -97,7 +131,7 @@ Call `sample_shot(base_direction, up_hint)` exactly once per `ShotFiredEvent`, a
 that event's simulation time. Pass the raw player/AI aim, not a direction already
 modified by `recoiled_direction`. The function:
 
-1. Applies the existing recoil to the aim's local basis.
+1. Applies the existing recoil and ADS sway to the aim's local basis.
 2. Samples a direction uniformly over the current cone's solid angle.
 3. Returns its direction, time, cone angle and recoil before/after the shot.
 4. Adds recoil and bloom for subsequent shots.

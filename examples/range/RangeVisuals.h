@@ -1,6 +1,7 @@
 #pragma once
 
 #include <weapon_library/WeaponPresentation.h>
+#include <weapon_library/WeaponHandling.h>
 
 #include <filesystem>
 #include <string>
@@ -16,6 +17,7 @@ struct ModelTransform {
 // Asset loading belongs to the demo adapter; the library only evaluates poses.
 struct RangeVisualDefinition {
     weapon_library::WeaponPresentation presentation;
+    weapon_library::AimSwaySettings aim_sway;
     std::filesystem::path model_file;
     ModelTransform model_transform;
     std::filesystem::path animation_file;

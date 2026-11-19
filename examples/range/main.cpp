@@ -127,6 +127,7 @@ int main(int argc, char** argv) {
     weapon_range::RangeSimulation range;
     renderer->reload_visuals(range);
     bool playing = false, armed = false, slow_motion = false;
+    bool show_crosshair = true;
     double accumulated = 0.0;
     const auto pause = [&] {
         range.set_trigger(false);
@@ -140,6 +141,7 @@ int main(int argc, char** argv) {
         // queue preserves such taps, unlike checking only the final key state.
         const KeyPresses pressed;
         if (pressed.contains(KEY_F5)) renderer->reload_visuals(range);
+        if (pressed.contains(KEY_C)) show_crosshair = !show_crosshair;
         const bool fire_down = IsMouseButtonDown(MOUSE_BUTTON_LEFT) || IsKeyDown(KEY_F);
         if (!IsWindowFocused()) pause();
         if (pressed.contains(KEY_ESCAPE)) pause();
@@ -189,7 +191,7 @@ int main(int argc, char** argv) {
                 accumulated -= tick;
             }
         }
-        renderer->draw(range, playing, slow_motion);
+        renderer->draw(range, playing, slow_motion, show_crosshair);
     }
     EnableCursor();
     renderer.reset();

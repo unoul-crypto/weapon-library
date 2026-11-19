@@ -43,12 +43,18 @@ RangeVisualDefinition default_visual(unsigned weapon_index) {
     }
     RangeVisualDefinition result;
     result.presentation = weapon_library::WeaponPresentation(std::move(definition));
+    if (weapon_index < firearm_count) {
+        const auto& handling = weapon_specs()[weapon_index].handling;
+        result.aim_sway = {handling.aimed_sway_amplitude_rad, handling.aimed_sway_frequency_hz};
+    }
     return result;
 }
 
 RangeVisualDefinition load_visual(const std::filesystem::path& file, unsigned weapon_index) {
     auto result = default_visual(weapon_index);
     auto definition = result.presentation.definition();
+    auto aim_sway_amplitude = result.aim_sway.amplitude_rad();
+    auto aim_sway_frequency = result.aim_sway.frequency_hz();
     std::ifstream input(file);
     if (!input) throw std::runtime_error("Cannot open visual config: " + file.filename().string());
     std::set<std::string> seen;
@@ -83,6 +89,9 @@ RangeVisualDefinition load_visual(const std::filesystem::path& file, unsigned we
             else if (key == "walk_sway_multiplier") numbers(value, definition.sway_strength.walk_multiplier);
             else if (key == "turn_sway_multiplier") numbers(value, definition.sway_strength.turn_multiplier);
             else if (key == "aimed_sway_multiplier") numbers(value, definition.sway_strength.aimed_multiplier);
+            else if (key == "aimed_sway_amplitude_rad")
+                numbers(value, aim_sway_amplitude.yaw_rad, aim_sway_amplitude.pitch_rad);
+            else if (key == "aimed_sway_frequency_hz") numbers(value, aim_sway_frequency);
             else if (key == "reload_interpolation" || key == "attack_interpolation") {
                 auto& interpolation = key == "reload_interpolation" ? definition.interpolation : definition.attack_interpolation;
                 if (value == "smooth") interpolation = weapon_library::PoseInterpolation::Smooth;
@@ -111,6 +120,7 @@ RangeVisualDefinition load_visual(const std::filesystem::path& file, unsigned we
         if (!result.animation_file.empty() && !has_clip) throw std::invalid_argument("Animation file requires a clip name");
         if (has_clip && result.model_file.empty()) throw std::invalid_argument("Animation clip requires a model");
         result.presentation = weapon_library::WeaponPresentation(std::move(definition));
+        result.aim_sway = {aim_sway_amplitude, aim_sway_frequency};
         if (!result.model_file.empty()) result.model_file = (file.parent_path() / result.model_file).lexically_normal();
         if (!result.animation_file.empty()) result.animation_file = (file.parent_path() / result.animation_file).lexically_normal();
         else if (has_clip) result.animation_file = result.model_file;

@@ -281,7 +281,30 @@ void draw_held_weapon(const RangeSimulation& range, WeaponAsset& asset) {
     rlEnableBackfaceCulling();
 }
 
-void draw_hud(const RangeSimulation& range, bool playing, bool slow_motion) {
+void draw_crosshair(const RangeSimulation& range, Camera3D camera, double spread_rad) {
+    const auto sight = GetWorldToScreen(rv(range.eye() + range.shot_center_direction()), camera);
+    if (!std::isfinite(sight.x) || !std::isfinite(sight.y) ||
+        sight.x < 0.0f || sight.y < 0.0f || sight.x >= GetScreenWidth() || sight.y >= GetScreenHeight())
+        return;
+    const int sight_x = static_cast<int>(std::lround(sight.x)), sight_y = static_cast<int>(std::lround(sight.y));
+    const bool hit = range.time() - range.last_hit_time() < 0.16;
+    const Color cross = hit ? accent : teal;
+    const double half_fov_rad = camera.fovy * 0.008726646259971648;
+    const float radius = static_cast<float>(GetScreenHeight() * 0.5 * std::tan(spread_rad) / std::tan(half_fov_rad));
+    const int gap = static_cast<int>(std::ceil(std::max(4.0f, radius)));
+    if (radius > 2.0f) DrawCircleLines(sight_x, sight_y, radius, Fade(cross, 0.35f));
+    DrawLine(sight_x - gap - 8, sight_y, sight_x - gap, sight_y, cross);
+    DrawLine(sight_x + gap, sight_y, sight_x + gap + 8, sight_y, cross);
+    DrawLine(sight_x, sight_y - gap - 8, sight_x, sight_y - gap, cross);
+    DrawLine(sight_x, sight_y + gap, sight_x, sight_y + gap + 8, cross);
+    DrawCircle(sight_x, sight_y, 1.5f, cross);
+    if (hit) {
+        for (int x : {-1, 1}) for (int y : {-1, 1})
+            DrawLine(sight_x + x * 18, sight_y + y * 18, sight_x + x * 24, sight_y + y * 24, accent);
+    }
+}
+
+void draw_hud(const RangeSimulation& range, Camera3D camera, bool playing, bool slow_motion, bool show_crosshair) {
     const int width = GetScreenWidth(), height = GetScreenHeight();
     const auto state = range.weapon_state();
     DrawRectangle(0, 0, width, 4, accent);
@@ -379,20 +402,9 @@ void draw_hud(const RangeSimulation& range, bool playing, bool slow_motion) {
         centered(i == knife_index ? "KNIFE" : weapon_specs()[i].name, x + 53, bottom + 120, 16, selected ? accent : white);
     }
     DrawRectangle(0, height - 34, width, 34, ink);
-    centered("WASD MOVE  RMB AIM  LMB/F ATTACK  R RELOAD  Q CANCEL  1-4 WEAPON  V SLOW  F5 VISUALS  HOME RESET  ESC PAUSE", width / 2, height - 23, width < 1200 ? 11 : 13, muted);
+    centered("WASD MOVE  RMB AIM  LMB/F ATTACK  R RELOAD  Q CANCEL  1-4 WEAPON  C CROSSHAIR  V SLOW  F5 CONFIG  HOME RESET  ESC PAUSE", width / 2, height - 23, width < 1200 ? 11 : 13, muted);
     const int cx = width / 2, cy = height / 2;
-    const bool hit = range.time() - range.last_hit_time() < 0.16;
-    const Color cross = hit ? accent : teal;
-    const double fov = (65.0 - 20.0 * handling.aim_fraction) / degrees;
-    const float radius = static_cast<float>(height * 0.5 * std::tan(handling.spread_half_angle_rad) / std::tan(fov * 0.5));
-    const int gap = static_cast<int>(std::ceil(std::max(4.0f, radius)));
-    if (radius > 2.0f) DrawCircleLines(cx, cy, radius, Fade(cross, 0.35f));
-    DrawLine(cx - gap - 8, cy, cx - gap, cy, cross); DrawLine(cx + gap, cy, cx + gap + 8, cy, cross);
-    DrawLine(cx, cy - gap - 8, cx, cy - gap, cross); DrawLine(cx, cy + gap, cx, cy + gap + 8, cross);
-    DrawCircle(cx, cy, 1.5f, cross);
-    if (hit) {
-        for (int x : {-1, 1}) for (int y : {-1, 1}) DrawLine(cx + x * 18, cy + y * 18, cx + x * 24, cy + y * 24, accent);
-    }
+    if (show_crosshair) draw_crosshair(range, camera, handling.spread_half_angle_rad);
     if (!range.is_melee() && !state.reload.active && range.time() - range.last_dry_time() < 0.9)
         centered("EMPTY  /  R TO RELOAD", cx, cy + 48, 18, accent);
     if (!playing) {
@@ -429,10 +441,13 @@ RangeRenderer::~RangeRenderer() = default;
 bool RangeRenderer::reload_visuals(RangeSimulation& range) {
     try {
         auto replacement = std::make_unique<Impl>(&config_directory_);
-        for (unsigned i = 0; i < replacement->assets.size(); ++i)
-            range.set_presentation(i, replacement->assets[i]->definition.presentation);
+        for (unsigned i = 0; i < replacement->assets.size(); ++i) {
+            const auto& config = replacement->assets[i]->definition;
+            range.set_presentation(i, config.presentation);
+            range.set_aim_sway(i, config.aim_sway);
+        }
         impl_ = std::move(replacement);
-        status_ = "VISUALS LOADED / F5 TO REFRESH";
+        status_ = "WEAPON CONFIG LOADED / F5 TO REFRESH";
         config_error_ = false;
         return true;
     } catch (const std::exception& error) {
@@ -443,7 +458,7 @@ bool RangeRenderer::reload_visuals(RangeSimulation& range) {
     }
 }
 
-void RangeRenderer::draw(const RangeSimulation& range, bool playing, bool slow_motion) {
+void RangeRenderer::draw(const RangeSimulation& range, bool playing, bool slow_motion, bool show_crosshair) {
     Camera3D camera{};
     camera.position = rv(range.eye());
     camera.target = rv(range.eye() + range.aim());
@@ -470,7 +485,7 @@ void RangeRenderer::draw(const RangeSimulation& range, bool playing, bool slow_m
     EndMode3D();
     draw_target_labels(range, camera);
     draw_last_miss_label(range, camera);
-    draw_hud(range, playing, slow_motion);
+    draw_hud(range, camera, playing, slow_motion, show_crosshair);
     DrawText(status_.c_str(), 29, 174, 12, config_error_ ? miss : muted);
     EndDrawing();
 }

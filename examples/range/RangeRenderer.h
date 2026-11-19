@@ -16,7 +16,7 @@ public:
     RangeRenderer(const RangeRenderer&) = delete;
     RangeRenderer& operator=(const RangeRenderer&) = delete;
     bool reload_visuals(RangeSimulation& range);
-    void draw(const RangeSimulation& range, bool playing, bool slow_motion = false);
+    void draw(const RangeSimulation& range, bool playing, bool slow_motion = false, bool show_crosshair = true);
 
 private:
     struct Impl;
