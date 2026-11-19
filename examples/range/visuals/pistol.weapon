@@ -1,5 +1,6 @@
 # Paths are relative to this file. Empty model uses the built-in shape.
 model =
+mass_kg = 0.9
 model_scale = 1 1 1
 model_offset = 0 0 0
 model_rotation = 0 0 0

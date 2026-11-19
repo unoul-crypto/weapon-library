@@ -31,6 +31,8 @@ void vector(const std::string& value, weapon_library::math::Vec3& v) { numbers(v
 RangeVisualDefinition default_visual(unsigned weapon_index) {
     if (weapon_index >= weapon_count) throw std::invalid_argument("Unknown range weapon");
     weapon_library::PresentationDefinition definition;
+    constexpr double masses[weapon_count] = {0.9, 3.5, 12.0, 0.35};
+    definition.mass_kg = masses[weapon_index];
     if (weapon_index == 0) definition.muzzle_offset.z = 0.22;
     if (weapon_index == knife_index) {
         definition.hip_offset = {0.23, -0.2, 0.55};
@@ -77,6 +79,7 @@ RangeVisualDefinition load_visual(const std::filesystem::path& file, unsigned we
             else if (key == "hip_offset") vector(value, definition.hip_offset);
             else if (key == "aimed_offset") vector(value, definition.aimed_offset);
             else if (key == "muzzle_offset") vector(value, definition.muzzle_offset);
+            else if (key == "mass_kg") numbers(value, definition.mass_kg);
             else if (key == "reload_interpolation" || key == "attack_interpolation") {
                 auto& interpolation = key == "reload_interpolation" ? definition.interpolation : definition.attack_interpolation;
                 if (value == "smooth") interpolation = weapon_library::PoseInterpolation::Smooth;

@@ -52,6 +52,34 @@ void attack_tracks_are_independent() {
     rejects([&] { WeaponPresentation invalid(d); });
 }
 
+void sway_tracks_weight_movement_and_aiming() {
+    WeaponSway light(0.35), heavy(12.0);
+    light.add_look_delta(0.15, 0.06);
+    heavy.add_look_delta(0.15, 0.06);
+    const auto initial = heavy.pose();
+    require(initial.rotation_degrees.y < light.pose().rotation_degrees.y && initial.rotation_degrees.x > 0.0,
+            "Heavy model did not lag behind a right/up turn");
+    light.advance(0.12, 0.0);
+    heavy.advance(0.12, 0.0);
+    const double light_remaining = std::abs(light.pose().rotation_degrees.y);
+    const double heavy_remaining = std::abs(heavy.pose().rotation_degrees.y);
+    require(heavy_remaining > light_remaining && heavy_remaining < std::abs(initial.rotation_degrees.y),
+            "Turn lag did not settle continuously");
+    require(same(heavy.pose(1.0).rotation_degrees, heavy.pose().rotation_degrees * 0.25),
+            "Aiming did not attenuate the sway");
+
+    WeaponSway walking(3.5), split(3.5);
+    walking.advance(0.7, 0.6);
+    for (int i = 0; i < 70; ++i) split.advance(0.01, 0.6);
+    const auto moving = walking.pose();
+    require(!same(moving.offset, {}) && same(moving.offset, split.pose().offset) &&
+            same(moving.rotation_degrees, split.pose().rotation_degrees), "Walk sway depends on update partition");
+    walking.set_mass_kg(10.0);
+    require(same(walking.pose().offset, moving.offset), "Changing mass snapped the model");
+    walking.advance(4.0, 0.0);
+    require(math::length(walking.pose().offset) < 1e-8, "Stopping did not settle the walk sway");
+}
+
 void invalid_definitions_are_rejected() {
     PresentationDefinition d;
     d.reload_keyframes[1].progress = 0;
@@ -68,6 +96,7 @@ void invalid_definitions_are_rejected() {
     WeaponPresentation p;
     rejects([&] { p.sample_reload(std::numeric_limits<double>::infinity()); });
     rejects([&] { p.mount_offset(std::numeric_limits<double>::quiet_NaN()); });
+    rejects([] { WeaponSway invalid(0.0); });
 }
 } // namespace
 
@@ -76,6 +105,7 @@ int main() {
         poses_follow_authoritative_reload_state();
         invalid_definitions_are_rejected();
         attack_tracks_are_independent();
+        sway_tracks_weight_movement_and_aiming();
         std::cout << "Presentation tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';

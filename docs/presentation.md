@@ -63,6 +63,25 @@ The scene uses this same offset for projectile spawning and the muzzle flash;
 its existing eye-to-muzzle obstruction check still prevents shooting through cover.
 Cosmetic recoil kick and reload poses do not change the collision socket.
 
+## Held weapon sway
+
+Set `mass_kg` in the weapon's `.weapon` file and press F5 to apply it. The value
+must be finite and positive. The sample weights are 0.35 kg for the knife, 0.9 kg
+for the pistol, 3.5 kg for the rifle and 12 kg for the handheld turret preset.
+Older configs can omit the field and use the preset's weight.
+
+Heavier models lag farther behind camera turns, settle more slowly, and sway
+more while walking. Full ADS reduces visible movement to 25%. The renderer
+applies sway to the held model before reload and attack poses. Camera aim, shot
+simulation, and melee contacts use their gameplay transforms.
+
+In another game, keep a `WeaponSway` instance for the held weapon and construct
+it with the configured mass. Call `add_look_delta(yaw, pitch)` when the camera
+turns, using radians with positive yaw to the right and positive pitch up.
+Call `advance(dt, movement_factor)` with elapsed presentation time and
+normalized movement speed, then apply `pose(aim_fraction)` in the held model's
+local frame. Use `set_mass_kg` to adjust mass while retaining the current pose.
+
 ## Keyframe animation
 
 ```ini

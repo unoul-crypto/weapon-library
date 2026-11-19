@@ -56,7 +56,7 @@ void configs_and_muzzle(const std::filesystem::path& assets) {
     require(same(range.weapon_pose().origin, range.eye() + weapon_range::Vec3{0, 0, -0.5}), "Custom ADS mount was ignored");
     for (const auto* invalid : {"misspelled = 1\n", "model_scale = 1 0 1\n", "hip_offset = 1 2 3 junk\n",
             "reload_key = 0.5 0 0 0 0 0 0\n", "reload_clip = Reload\n", "model = a.obj\nmodel = b.obj\n",
-            "reload_motion = none\nreload_key = 0 0 0 0 0 0 0\n"}) {
+            "reload_motion = none\nreload_key = 0 0 0 0 0 0 0\n", "mass_kg = -1\n"}) {
         bool rejected = false;
         try { weapon_range::load_visual(fixture.write(invalid), 0); }
         catch (const std::runtime_error& error) {
@@ -72,6 +72,18 @@ void configs_and_muzzle(const std::filesystem::path& assets) {
     require(knife.attack_clip == "Slash" && knife.animation_file == knife.model_file &&
             knife.presentation.definition().interpolation == weapon_library::PoseInterpolation::Smooth &&
             same(knife.presentation.sample_attack(0.5).offset, {0.5, 0, 0}), "Attack animation configuration was ignored");
+
+    weapon_range::RangeSimulation light, heavy;
+    heavy.set_presentation(0, weapon_range::load_visual(fixture.write("mass_kg = 10\n"), 0).presentation);
+    light.look(0.1, 0.0);
+    heavy.look(0.1, 0.0);
+    require(heavy.sway_pose().rotation_degrees.y < light.sway_pose().rotation_degrees.y &&
+            same(light.aim(), heavy.aim()) && same(light.weapon_pose().muzzle, heavy.weapon_pose().muzzle),
+            "Configured mass did not change the model independently of aim and the muzzle socket");
+    light.set_trigger(true);
+    heavy.set_trigger(true);
+    require(same(light.projectiles().front().motion.state().velocity, heavy.projectiles().front().motion.state().velocity),
+            "Visual sway changed the shot direction");
 }
 } // namespace
 

@@ -1,5 +1,6 @@
 # Blank model uses the built-in knife. Custom OBJ/GLB/GLTF models also work.
 model =
+mass_kg = 0.35
 model_scale = 1 1 1
 model_offset = 0 0 0
 model_rotation = 0 0 0

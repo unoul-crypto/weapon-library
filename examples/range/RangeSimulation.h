@@ -90,6 +90,7 @@ public:
     WeaponPose weapon_pose() const;
     void set_presentation(unsigned index, weapon_library::WeaponPresentation presentation);
     const weapon_library::WeaponPresentation& presentation() const { return presentation_[selected_]; }
+    weapon_library::PresentationPose sway_pose() const;
     weapon_library::HandlingState handling_state() const;
     double time() const noexcept { return time_; }
     unsigned selected_weapon() const noexcept { return selected_; }
@@ -134,6 +135,7 @@ private:
     std::array<std::unique_ptr<weapon_library::WeaponHandling>, weapon_count> handling_;
     std::array<std::shared_ptr<weapon_library::AmmunitionReserve>, 3> reserves_;
     std::array<weapon_library::WeaponPresentation, weapon_count> presentation_;
+    weapon_library::WeaponSway sway_;
     std::unique_ptr<weapon_library::MeleeMechanism> melee_;
     std::array<Target, 4> targets_;
     std::vector<ShotTrace> traces_;

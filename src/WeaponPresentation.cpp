@@ -7,7 +7,16 @@
 
 namespace weapon_library {
 namespace {
+constexpr double radians_to_degrees = 57.29577951308232;
+constexpr double full_turn = 6.283185307179586;
+constexpr double step_cycle_seconds = 1.0 / 1.7;
+
 bool finite(math::Vec3 v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
+void validate_mass(double mass_kg) {
+    if (!std::isfinite(mass_kg) || mass_kg <= 0.0)
+        throw std::invalid_argument("Weapon mass must be finite and positive");
+}
+
 double fraction(double value) {
     if (!std::isfinite(value)) throw std::invalid_argument("Presentation progress must be finite");
     return std::clamp(value, 0.0, 1.0);
@@ -41,6 +50,7 @@ PresentationPose sample_track(const std::vector<PoseKeyframe>& keys, PoseInterpo
 } // namespace
 
 WeaponPresentation::WeaponPresentation(PresentationDefinition definition) : definition_(std::move(definition)) {
+    validate_mass(definition_.mass_kg);
     if (!finite(definition_.hip_offset) || !finite(definition_.aimed_offset) || !finite(definition_.muzzle_offset))
         throw std::invalid_argument("Presentation offsets must be finite");
     if ((definition_.interpolation != PoseInterpolation::Linear && definition_.interpolation != PoseInterpolation::Smooth) ||
@@ -48,6 +58,50 @@ WeaponPresentation::WeaponPresentation(PresentationDefinition definition) : defi
         throw std::invalid_argument("Unknown presentation interpolation");
     validate_track(definition_.reload_keyframes);
     validate_track(definition_.attack_keyframes);
+}
+
+WeaponSway::WeaponSway(double mass_kg) { set_mass_kg(mass_kg); }
+
+void WeaponSway::set_mass_kg(double mass_kg) {
+    validate_mass(mass_kg);
+    // A bounded response keeps very heavy models controllable on screen.
+    inertia_ = mass_kg / (mass_kg + 2.0);
+}
+
+void WeaponSway::add_look_delta(double yaw_rad, double pitch_rad) {
+    if (!std::isfinite(yaw_rad) || !std::isfinite(pitch_rad))
+        throw std::invalid_argument("Look delta must be finite");
+    constexpr double max_lag = 0.13; // About 7.5 degrees.
+    const double gain = 0.18 + 0.55 * inertia_;
+    // Local +Y rotation turns the model right, and local +X pitches it down.
+    yaw_lag_ = std::clamp(yaw_lag_ - yaw_rad * gain, -max_lag, max_lag);
+    pitch_lag_ = std::clamp(pitch_lag_ + pitch_rad * gain, -max_lag, max_lag);
+}
+
+void WeaponSway::advance(double seconds, double movement_factor) {
+    if (!std::isfinite(seconds) || seconds < 0.0 ||
+        !std::isfinite(movement_factor) || movement_factor < 0.0 || movement_factor > 1.0)
+        throw std::invalid_argument("Sway time must be finite and nonnegative and movement in [0, 1]");
+    const double response_seconds = 0.065 + 0.17 * inertia_;
+    const double exponent = -seconds / response_seconds;
+    const double decay = std::exp(exponent);
+    yaw_lag_ *= decay;
+    pitch_lag_ *= decay;
+    const double step_target = movement_factor * (0.75 + 0.6 * inertia_);
+    const double blend_weight = -std::expm1(exponent);
+    step_weight_ += (step_target - step_weight_) * blend_weight;
+    const double walk_time = std::fmod(seconds * movement_factor, step_cycle_seconds);
+    step_phase_ = std::fmod(step_phase_ + walk_time / step_cycle_seconds * full_turn, full_turn);
+}
+
+PresentationPose WeaponSway::pose(double aim_fraction) const {
+    const double amount = 1.0 - 0.75 * fraction(aim_fraction);
+    const double side = std::sin(step_phase_) * step_weight_;
+    const double rise = std::sin(2.0 * step_phase_) * step_weight_;
+    return {
+        math::Vec3{yaw_lag_ * 0.2 + side * 0.012, -pitch_lag_ * 0.2 + rise * 0.012, 0.0} * amount,
+        math::Vec3{pitch_lag_ * radians_to_degrees, yaw_lag_ * radians_to_degrees, side * 1.5} * amount
+    };
 }
 
 math::Vec3 WeaponPresentation::mount_offset(double aim_fraction) const {

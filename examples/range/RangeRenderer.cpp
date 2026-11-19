@@ -245,6 +245,7 @@ void draw_held_weapon(const RangeSimulation& range, WeaponAsset& asset) {
     rlPushMatrix();
     rlDisableBackfaceCulling();
     rlMultMatrixf(matrix);
+    transform_pose(range.sway_pose());
     const auto reload = range.weapon_state().reload;
     transform_pose(asset.definition.presentation.reload_pose(reload));
     if (range.is_melee() && range.melee_state().weapon.phase != weapon_library::Phase::Ready)

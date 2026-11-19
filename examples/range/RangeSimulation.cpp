@@ -9,6 +9,7 @@ namespace weapon_range {
 
 namespace {
 using namespace weapon_library::ballistics;
+constexpr double movement_speed = 3.2;
 
 bool in_water(Vec3 p) {
     const auto& box = water_volume();
@@ -274,6 +275,7 @@ void RangeSimulation::reset() {
     eye_ = {0.0, 1.65, 5.0};
     yaw_ = pitch_ = time_ = 0.0;
     selected_ = shots_ = hits_ = score_ = 0;
+    sway_ = weapon_library::WeaponSway(presentation().definition().mass_kg);
     last_shot_time_ = last_hit_time_ = last_dry_time_ = -10.0;
     water_entries_ = 0;
     aiming_ = false;
@@ -293,6 +295,7 @@ void RangeSimulation::select_weapon(unsigned index) {
     else if (weapons_[selected_]->state().reload.active) cancel_reload();
     handling_[selected_]->set_aiming(false);
     selected_ = index;
+    sway_ = weapon_library::WeaponSway(presentation().definition().mass_kg);
     handling_[selected_]->set_aiming(!is_melee() && aiming_ && !weapon_state().reload.active);
     last_reload_notice_time_ = -10.0;
 }
@@ -334,8 +337,13 @@ WeaponPose RangeSimulation::weapon_pose() const {
     return weapon_pose(selected_);
 }
 
+weapon_library::PresentationPose RangeSimulation::sway_pose() const {
+    return sway_.pose(handling_state().aim_fraction);
+}
+
 void RangeSimulation::set_presentation(unsigned index, weapon_library::WeaponPresentation presentation) {
     if (index >= presentation_.size()) throw std::invalid_argument("Unknown range weapon");
+    if (index == selected_) sway_.set_mass_kg(presentation.definition().mass_kg);
     presentation_[index] = std::move(presentation);
 }
 
@@ -357,7 +365,7 @@ void RangeSimulation::set_movement(double forward, double strafe) {
     strafe = std::clamp(strafe, -1.0, 1.0);
     const double magnitude = std::hypot(forward, strafe);
     movement_velocity_ = (view_direction(yaw_, 0.0) * forward +
-                         Vec3{std::cos(yaw_), 0, std::sin(yaw_)} * strafe) * (3.2 / std::max(1.0, magnitude));
+                         Vec3{std::cos(yaw_), 0, std::sin(yaw_)} * strafe) * (movement_speed / std::max(1.0, magnitude));
     for (auto& handling : handling_) handling->set_movement_factor(std::min(1.0, magnitude));
 }
 
@@ -379,8 +387,12 @@ void RangeSimulation::look(double yaw_delta, double pitch_delta) {
     if (!std::isfinite(yaw_delta) || !std::isfinite(pitch_delta)) {
         throw std::invalid_argument("Look input must be finite");
     }
-    yaw_ = std::remainder(yaw_ + yaw_delta, 6.283185307179586);
-    pitch_ = std::clamp(pitch_ + pitch_delta, -1.25, 1.25);
+    constexpr double full_turn = 6.283185307179586;
+    const double turn = std::remainder(yaw_delta, full_turn);
+    const double next_pitch = std::clamp(pitch_ + pitch_delta, -1.25, 1.25);
+    sway_.add_look_delta(turn, next_pitch - pitch_);
+    yaw_ = std::remainder(yaw_ + turn, full_turn);
+    pitch_ = next_pitch;
 }
 
 void RangeSimulation::advance(double seconds, double forward, double strafe) {
@@ -436,9 +448,13 @@ void RangeSimulation::advance_handling(double seconds) {
 }
 
 void RangeSimulation::move(double seconds) {
+    if (seconds <= 0.0) return;
+    const auto old_eye = eye_;
     eye_ = eye_ + movement_velocity_ * seconds;
     eye_.x = std::clamp(eye_.x, -5.5, 5.5);
     eye_.z = std::clamp(eye_.z, 1.5, 7.0);
+    const double movement = std::min(1.0, weapon_library::math::length(eye_ - old_eye) / (movement_speed * seconds));
+    sway_.advance(seconds, movement);
 }
 
 weapon_library::FiringState RangeSimulation::weapon_state() const {

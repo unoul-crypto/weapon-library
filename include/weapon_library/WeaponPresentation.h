@@ -30,6 +30,24 @@ struct PresentationDefinition {
     PoseInterpolation interpolation = PoseInterpolation::Smooth;
     std::vector<PoseKeyframe> attack_keyframes;
     PoseInterpolation attack_interpolation = PoseInterpolation::Smooth;
+    double mass_kg = 1.0; // Held model inertia.
+};
+
+// Runtime motion of a held model, in the same local space as PresentationPose.
+class WeaponSway {
+public:
+    explicit WeaponSway(double mass_kg = 1.0);
+    void set_mass_kg(double mass_kg); // Retains the current pose when tuning mass.
+    void add_look_delta(double yaw_rad, double pitch_rad);
+    void advance(double seconds, double movement_factor); // Actual movement speed as a fraction in [0, 1].
+    PresentationPose pose(double aim_fraction = 0.0) const;
+
+private:
+    double inertia_ = 0.0;
+    double yaw_lag_ = 0.0;
+    double pitch_lag_ = 0.0;
+    double step_phase_ = 0.0;
+    double step_weight_ = 0.0;
 };
 
 // Immutable, engine-independent presentation data. No clock, assets or gameplay mutations.
