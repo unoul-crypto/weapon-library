@@ -1,6 +1,9 @@
 # Original bundled glTF demonstrates a model with an animated magazine.
 model = models/rifle.gltf
 mass_kg = 3.5
+walk_sway_multiplier = 1
+turn_sway_multiplier = 1
+aimed_sway_multiplier = 0.25
 reload_clip = Reload
 model_scale = 1 1 1
 model_offset = 0 0 0

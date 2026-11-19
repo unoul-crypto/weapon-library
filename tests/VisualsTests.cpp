@@ -1,6 +1,7 @@
 #include "RangeSimulation.h"
 #include "RangeVisuals.h"
 
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -56,7 +57,8 @@ void configs_and_muzzle(const std::filesystem::path& assets) {
     require(same(range.weapon_pose().origin, range.eye() + weapon_range::Vec3{0, 0, -0.5}), "Custom ADS mount was ignored");
     for (const auto* invalid : {"misspelled = 1\n", "model_scale = 1 0 1\n", "hip_offset = 1 2 3 junk\n",
             "reload_key = 0.5 0 0 0 0 0 0\n", "reload_clip = Reload\n", "model = a.obj\nmodel = b.obj\n",
-            "reload_motion = none\nreload_key = 0 0 0 0 0 0 0\n", "mass_kg = -1\n"}) {
+            "reload_motion = none\nreload_key = 0 0 0 0 0 0 0\n", "mass_kg = -1\n",
+            "walk_sway_multiplier = -1\n", "turn_sway_multiplier = -1\n", "aimed_sway_multiplier = -1\n"}) {
         bool rejected = false;
         try { weapon_range::load_visual(fixture.write(invalid), 0); }
         catch (const std::runtime_error& error) {
@@ -85,12 +87,38 @@ void configs_and_muzzle(const std::filesystem::path& assets) {
     require(same(light.projectiles().front().motion.state().velocity, heavy.projectiles().front().motion.state().velocity),
             "Visual sway changed the shot direction");
 }
+
+void sway_settings_update_existing_motion() {
+    ConfigFixture fixture;
+    weapon_range::RangeSimulation range;
+    range.look(0.1, 0.05);
+    range.advance(0.13, 1.0);
+    const auto original = range.sway_pose();
+    const auto original_mass = range.presentation().definition().mass_kg;
+    const auto visual = weapon_range::load_visual(fixture.write(
+        "walk_sway_multiplier = 0.5\nturn_sway_multiplier = 0\naimed_sway_multiplier = 1\n"), 0);
+    range.set_presentation(0, visual.presentation);
+    const auto tuned = range.sway_pose();
+    require(range.presentation().definition().mass_kg == original_mass &&
+            std::abs(tuned.rotation_degrees.z - original.rotation_degrees.z * 0.5) < 1e-10 &&
+            tuned.rotation_degrees.y == 0.0, "Reloading sway settings lost the mass or current motion");
+    range.set_aiming(true);
+    range.advance(0.3, 1.0);
+    const auto aimed = range.sway_pose();
+    auto weaker = visual.presentation.definition();
+    weaker.sway_strength.aimed_multiplier = 0.25;
+    range.set_presentation(0, weapon_library::WeaponPresentation(weaker));
+    require(range.handling_state().aim_fraction == 1.0 && std::abs(aimed.rotation_degrees.z) > 0.01 &&
+            same(range.sway_pose().rotation_degrees, aimed.rotation_degrees * 0.25),
+            "The configured aimed multiplier was not applied to current movement");
+}
 } // namespace
 
 int main(int argc, char** argv) {
     try {
         require(argc == 2, "Expected bundled visual directory");
         configs_and_muzzle(argv[1]);
+        sway_settings_update_existing_motion();
         std::cout << "Visual config and socket tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';

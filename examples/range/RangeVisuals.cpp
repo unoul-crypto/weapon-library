@@ -80,6 +80,9 @@ RangeVisualDefinition load_visual(const std::filesystem::path& file, unsigned we
             else if (key == "aimed_offset") vector(value, definition.aimed_offset);
             else if (key == "muzzle_offset") vector(value, definition.muzzle_offset);
             else if (key == "mass_kg") numbers(value, definition.mass_kg);
+            else if (key == "walk_sway_multiplier") numbers(value, definition.sway_strength.walk_multiplier);
+            else if (key == "turn_sway_multiplier") numbers(value, definition.sway_strength.turn_multiplier);
+            else if (key == "aimed_sway_multiplier") numbers(value, definition.sway_strength.aimed_multiplier);
             else if (key == "reload_interpolation" || key == "attack_interpolation") {
                 auto& interpolation = key == "reload_interpolation" ? definition.interpolation : definition.attack_interpolation;
                 if (value == "smooth") interpolation = weapon_library::PoseInterpolation::Smooth;

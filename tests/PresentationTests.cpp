@@ -80,6 +80,31 @@ void sway_tracks_weight_movement_and_aiming() {
     require(math::length(walking.pose().offset) < 1e-8, "Stopping did not settle the walk sway");
 }
 
+void sway_strengths_control_independent_components() {
+    WeaponSway sway(3.5);
+    sway.add_look_delta(0.1, 0.05);
+    sway.advance(0.13, 1.0);
+
+    const auto walk = sway.pose(0.0, {1.0, 0.0, 0.25});
+    const auto turn = sway.pose(0.0, {0.0, 1.0, 0.25});
+    require(walk.rotation_degrees.z != 0.0 && walk.rotation_degrees.y == 0.0 &&
+            turn.rotation_degrees.y != 0.0 && turn.rotation_degrees.z == 0.0,
+            "Disabling one sway mode affected the wrong motion");
+
+    const auto tuned = sway.pose(0.0, {0.5, 2.0, 0.0});
+    require(same(tuned.offset, walk.offset * 0.5 + turn.offset * 2.0) &&
+            same(tuned.rotation_degrees, walk.rotation_degrees * 0.5 + turn.rotation_degrees * 2.0),
+            "Walk and turn multipliers did not scale independently");
+    const auto transitional = sway.pose(0.5, {0.5, 2.0, 0.0});
+    const auto aimed = sway.pose(1.0, {0.5, 2.0, 0.0});
+    require(same(transitional.offset, tuned.offset * 0.5) &&
+            same(aimed.offset, {}) && same(aimed.rotation_degrees, {}), "ADS did not blend toward its configured strength");
+
+    const double huge = std::numeric_limits<double>::max();
+    require(same(sway.pose(1.0, {huge, huge, huge}).rotation_degrees, (walk.rotation_degrees + turn.rotation_degrees) * 4.0),
+            "Extreme sway multipliers escaped the pose limit");
+}
+
 void invalid_definitions_are_rejected() {
     PresentationDefinition d;
     d.reload_keyframes[1].progress = 0;
@@ -106,6 +131,7 @@ int main() {
         invalid_definitions_are_rejected();
         attack_tracks_are_independent();
         sway_tracks_weight_movement_and_aiming();
+        sway_strengths_control_independent_components();
         std::cout << "Presentation tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';

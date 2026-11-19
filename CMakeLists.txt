@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(weapon_library VERSION 0.10.0 LANGUAGES CXX)
+project(weapon_library VERSION 0.11.0 LANGUAGES CXX)
 
 option(WEAPON_LIBRARY_BUILD_TESTS "Build headless behavioral tests" OFF)
 option(WEAPON_LIBRARY_BUILD_EXAMPLES "Build the headless example" OFF)

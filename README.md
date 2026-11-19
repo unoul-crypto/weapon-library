@@ -1,4 +1,4 @@
-# Weapon Library v0.10.0
+# Weapon Library v0.11.0
 
 A small C++17 foundation for reusable weapon mechanics. The core has no external
 dependencies, graphics, physics engine, platform calls or wall-clock access.
@@ -20,7 +20,7 @@ dependencies, graphics, physics engine, platform calls or wall-clock access.
   shared by HUD snapshots and shot sampling.
 - Interruptible reload actions, finite reserves and an atomic ammunition-source contract.
 - Engine-independent weapon mounts and configurable reload keyframe poses.
-- Weight-based model lag on turns and sway while walking, with reduced motion during ADS.
+- Weight-based model inertia with separate walk, turn and ADS sway multipliers.
 - Range adapter for custom OBJ/GLB/GLTF models and named skeletal reload clips.
 - A melee mechanism with active-phase sweeps, per-attack entity deduplication,
   blocking contacts and configurable target limits through a game-owned world adapter.

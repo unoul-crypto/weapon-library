@@ -338,7 +338,7 @@ WeaponPose RangeSimulation::weapon_pose() const {
 }
 
 weapon_library::PresentationPose RangeSimulation::sway_pose() const {
-    return sway_.pose(handling_state().aim_fraction);
+    return sway_.pose(handling_state().aim_fraction, presentation().definition().sway_strength);
 }
 
 void RangeSimulation::set_presentation(unsigned index, weapon_library::WeaponPresentation presentation) {

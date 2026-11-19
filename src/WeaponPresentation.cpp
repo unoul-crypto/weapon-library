@@ -17,6 +17,14 @@ void validate_mass(double mass_kg) {
         throw std::invalid_argument("Weapon mass must be finite and positive");
 }
 
+void validate_sway_strength(const SwayStrength& strength) {
+    const double multipliers[] = {strength.walk_multiplier, strength.turn_multiplier, strength.aimed_multiplier};
+    for (const double value : multipliers) {
+        if (!std::isfinite(value) || value < 0.0)
+            throw std::invalid_argument("Sway multipliers must be finite and nonnegative");
+    }
+}
+
 double fraction(double value) {
     if (!std::isfinite(value)) throw std::invalid_argument("Presentation progress must be finite");
     return std::clamp(value, 0.0, 1.0);
@@ -51,6 +59,7 @@ PresentationPose sample_track(const std::vector<PoseKeyframe>& keys, PoseInterpo
 
 WeaponPresentation::WeaponPresentation(PresentationDefinition definition) : definition_(std::move(definition)) {
     validate_mass(definition_.mass_kg);
+    validate_sway_strength(definition_.sway_strength);
     if (!finite(definition_.hip_offset) || !finite(definition_.aimed_offset) || !finite(definition_.muzzle_offset))
         throw std::invalid_argument("Presentation offsets must be finite");
     if ((definition_.interpolation != PoseInterpolation::Linear && definition_.interpolation != PoseInterpolation::Smooth) ||
@@ -94,13 +103,21 @@ void WeaponSway::advance(double seconds, double movement_factor) {
     step_phase_ = std::fmod(step_phase_ + walk_time / step_cycle_seconds * full_turn, full_turn);
 }
 
-PresentationPose WeaponSway::pose(double aim_fraction) const {
-    const double amount = 1.0 - 0.75 * fraction(aim_fraction);
-    const double side = std::sin(step_phase_) * step_weight_;
-    const double rise = std::sin(2.0 * step_phase_) * step_weight_;
+PresentationPose WeaponSway::pose(double aim_fraction, const SwayStrength& strength) const {
+    validate_sway_strength(strength);
+    const double aim = fraction(aim_fraction);
+    const double aim_amount = (1.0 - aim) + strength.aimed_multiplier * aim;
+    // Bound the additional motion even if the configured multipliers are extreme.
+    constexpr double max_boost = 4.0;
+    const double walk_amount = std::min(max_boost, strength.walk_multiplier * aim_amount);
+    const double turn_amount = std::min(max_boost, strength.turn_multiplier * aim_amount);
+    const double side = std::sin(step_phase_) * step_weight_ * walk_amount;
+    const double rise = std::sin(2.0 * step_phase_) * step_weight_ * walk_amount;
+    const double yaw = yaw_lag_ * turn_amount;
+    const double pitch = pitch_lag_ * turn_amount;
     return {
-        math::Vec3{yaw_lag_ * 0.2 + side * 0.012, -pitch_lag_ * 0.2 + rise * 0.012, 0.0} * amount,
-        math::Vec3{pitch_lag_ * radians_to_degrees, yaw_lag_ * radians_to_degrees, side * 1.5} * amount
+        {yaw * 0.2 + side * 0.012, -pitch * 0.2 + rise * 0.012, 0.0},
+        {pitch * radians_to_degrees, yaw * radians_to_degrees, side * 1.5}
     };
 }
 

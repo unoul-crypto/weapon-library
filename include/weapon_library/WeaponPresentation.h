@@ -21,6 +21,12 @@ using ReloadKeyframe = PoseKeyframe; // Compatibility with existing reload defin
 
 enum class PoseInterpolation { Linear, Smooth };
 
+struct SwayStrength {
+    double walk_multiplier = 1.0;
+    double turn_multiplier = 1.0;
+    double aimed_multiplier = 0.25;
+};
+
 struct PresentationDefinition {
     math::Vec3 hip_offset{0.24, -0.22, 0.58};
     math::Vec3 aimed_offset{0.0, -0.065, 0.5};
@@ -31,6 +37,7 @@ struct PresentationDefinition {
     std::vector<PoseKeyframe> attack_keyframes;
     PoseInterpolation attack_interpolation = PoseInterpolation::Smooth;
     double mass_kg = 1.0; // Held model inertia.
+    SwayStrength sway_strength;
 };
 
 // Runtime motion of a held model, in the same local space as PresentationPose.
@@ -40,7 +47,7 @@ public:
     void set_mass_kg(double mass_kg); // Retains the current pose when tuning mass.
     void add_look_delta(double yaw_rad, double pitch_rad);
     void advance(double seconds, double movement_factor); // Actual movement speed as a fraction in [0, 1].
-    PresentationPose pose(double aim_fraction = 0.0) const;
+    PresentationPose pose(double aim_fraction = 0.0, const SwayStrength& strength = {}) const;
 
 private:
     double inertia_ = 0.0;

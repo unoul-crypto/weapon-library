@@ -71,16 +71,32 @@ for the pistol, 3.5 kg for the rifle and 12 kg for the handheld turret preset.
 Older configs can omit the field and use the preset's weight.
 
 Heavier models lag farther behind camera turns, settle more slowly, and sway
-more while walking. Full ADS reduces visible movement to 25%. The renderer
-applies sway to the held model before reload and attack poses. Camera aim, shot
-simulation, and melee contacts use their gameplay transforms.
+more while walking. Use these optional settings to tune the visible motion
+independently of the mass. These are the defaults.
+
+```ini
+walk_sway_multiplier = 1
+turn_sway_multiplier = 1
+aimed_sway_multiplier = 0.25
+```
+
+The walk and turn settings scale their respective motion. Use `0` to disable
+one, `0.5` for half strength or `2` for double strength. The aimed multiplier
+blends from `1` at hip fire to the configured value at full ADS and applies to
+both kinds of motion. Use `0` for a steady model at full ADS and `1` for the
+same strength as at hip fire. Multipliers must be finite and nonnegative. The
+resulting boost for each kind of motion is limited to four times the baseline.
+The renderer applies sway to the held model before reload and attack poses.
+Camera aim, shot simulation and melee contacts use their gameplay transforms.
 
 In another game, keep a `WeaponSway` instance for the held weapon and construct
 it with the configured mass. Call `add_look_delta(yaw, pitch)` when the camera
 turns, using radians with positive yaw to the right and positive pitch up.
 Call `advance(dt, movement_factor)` with elapsed presentation time and
-normalized movement speed, then apply `pose(aim_fraction)` in the held model's
-local frame. Use `set_mass_kg` to adjust mass while retaining the current pose.
+normalized movement speed, then apply `pose(aim_fraction, sway_strength)` in the
+held model's local frame. Pass the weapon's `PresentationDefinition::sway_strength`
+or use the default argument. Use `set_mass_kg` to adjust mass while retaining
+the current pose.
 
 ## Keyframe animation
 
