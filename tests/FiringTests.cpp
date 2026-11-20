@@ -333,6 +333,63 @@ void projectile_count_is_independent_of_cadence_and_ammo() {
     rejects([&] { FiringMechanism invalid(weapon_definition(), definition); });
 }
 
+void burst_finishes_after_release_and_never_repeats_while_held() {
+    auto definition = firing_definition(FireMode::Burst, 0.1, 30, 2);
+    definition.burst_size = 3;
+    FiringMechanism gun(weapon_definition({7, 0.03, 0.0, 0.04}), definition, 13);
+    gun.execute(TriggerCommand::Press);
+    gun.execute(TriggerCommand::Release);
+    require(gun.state().burst_shots_remaining == 2, "Trigger release discarded an accepted burst");
+    const auto first = collect<ShotFiredEvent>(gun.advance(0.23));
+    require(first.size() == 3 && near(first[0].time_seconds, 0.03) && near(first[1].time_seconds, 0.13) &&
+            near(first[2].time_seconds, 0.23) && first[2].rounds_remaining == 7,
+            "A single burst lost shots, cadence, or ammo accounting");
+    gun.advance(0.09);
+    gun.execute(TriggerCommand::Press);
+    require(collect<ShotFiredEvent>(gun.advance(1.0)).size() == 3 && gun.state().rounds_remaining == 1,
+            "Held trigger did not stop after one burst");
+    gun.execute(TriggerCommand::Release);
+    const auto dry = gun.execute(TriggerCommand::Press);
+    require(collect<DryFireEvent>(dry).size() == 1 && collect<ShotFiredEvent>(gun.advance(1.0)).empty(),
+            "Underfilled magazine produced phantom burst shots");
+
+    FiringMechanism partial(weapon_definition(), definition, 5);
+    const auto immediate = collect<ShotFiredEvent>(partial.execute(TriggerCommand::Press));
+    const auto followup = collect<ShotFiredEvent>(partial.advance(1.0));
+    require(immediate.size() == 1 && followup.size() == 1 && followup.back().rounds_remaining == 1,
+            "Short burst did not stop at the available ammo");
+}
+
+void mode_changes_and_reload_interrupt_unstarted_burst_shots() {
+    auto definition = firing_definition(FireMode::Burst, 0.1);
+    definition.available_modes = {FireMode::Burst, FireMode::Automatic};
+    definition.reload_action_id = 8;
+    const auto actions = std::make_shared<const WeaponDefinition>(
+        std::vector<ActionDefinition>{{7, 0.03, 0.0, 0.04}, {8, 0.2, 0.0, 0.0}});
+    FiringMechanism gun(actions, definition, 5);
+    gun.execute(TriggerCommand::Press);
+    require(!gun.set_fire_mode(FireMode::SemiAutomatic) && gun.state().burst_shots_remaining == 2,
+            "Unavailable mode changed the active burst");
+    require(gun.set_fire_mode(FireMode::Automatic) && gun.state().requires_trigger_release,
+            "Mode switch failed to require a fresh trigger press");
+    require(collect<ShotFiredEvent>(gun.advance(1.0)).size() == 1 && gun.state().rounds_remaining == 4,
+            "Mode switch lost the committed windup or fired the remaining burst");
+
+    gun.execute(TriggerCommand::Release);
+    gun.set_fire_mode(FireMode::Burst);
+    gun.execute(TriggerCommand::Press);
+    gun.execute(TriggerCommand::Release);
+    auto reserve = std::make_shared<AmmunitionReserve>(10);
+    require(gun.request_reload(reserve).accepted() && gun.state().burst_shots_remaining == 0,
+            "Reload did not interrupt the burst");
+    require(collect<ShotFiredEvent>(gun.advance(1.0)).size() == 1 && gun.state().rounds_remaining == 13 &&
+            collect<ShotFiredEvent>(gun.advance(1.0)).empty(), "Reload lost the committed shot or restarted the burst");
+
+    rejects([] { FireModeSettings invalid(FireMode::Burst, {}, 1); });
+    rejects([] { FireModeSettings invalid(FireMode::Automatic, {FireMode::SemiAutomatic}); });
+    rejects([] { FireModeSettings invalid(FireMode::Burst, {FireMode::Burst, FireMode::Burst}); });
+}
+
 } // namespace
 
 int main() {
@@ -346,6 +403,8 @@ int main() {
         {"Empty magazine", empty_magazine_has_no_phantom_shots_or_spam},
         {"Multi-round shots", multi_round_shots_preserve_remainder},
         {"Multiple projectiles per shot", projectile_count_is_independent_of_cadence_and_ammo},
+        {"Burst cadence and ammo", burst_finishes_after_release_and_never_repeats_while_held},
+        {"Burst interruption and mode restrictions", mode_changes_and_reload_interrupt_unstarted_burst_shots},
         {"Equivalent time partitions", equivalent_time_partitions_preserve_full_event_stream},
         {"Independent instances and idle time", independent_weapons_and_no_idle_backlog},
         {"Invalid definitions", invalid_definitions_are_rejected},

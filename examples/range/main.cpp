@@ -130,7 +130,7 @@ int main(int argc, char** argv) {
     bool show_crosshair = true;
     double accumulated = 0.0;
     const auto pause = [&] {
-        range.set_trigger(false);
+        range.interrupt_trigger();
         range.set_stance_input(false, false);
         playing = armed = false;
         accumulated = 0.0;
@@ -162,6 +162,7 @@ int main(int argc, char** argv) {
                 }
             }
             if (pressed.contains(KEY_HOME)) { range.reset(); changed = true; }
+            if (pressed.contains(KEY_B) && range.cycle_fire_mode()) changed = true;
             const bool lower = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
             range.set_stance_input(IsMouseButtonDown(MOUSE_BUTTON_RIGHT), lower);
             if (pressed.contains(KEY_R)) {

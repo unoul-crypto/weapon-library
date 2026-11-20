@@ -62,7 +62,8 @@ void configs_and_muzzle(const std::filesystem::path& assets) {
             "aimed_sway_amplitude_rad = 0.02\n", "aimed_sway_amplitude_rad = 0.02 2\n",
             "aimed_sway_frequency_hz = -0.5\n", "raise_to_aim_seconds = -0.1\n",
             "lower_key = 0.5 0 0 0 0 0 0\n", "projectiles_per_shot = 0\n",
-            "projectiles_per_shot = 3.5\n", "projectiles_per_shot = 65\n"}) {
+            "projectiles_per_shot = 3.5\n", "projectiles_per_shot = 65\n", "fire_modes =\n",
+            "fire_modes = single\n", "fire_modes = burst burst\n", "burst_size = 1\n"}) {
         bool rejected = false;
         try { weapon_range::load_visual(fixture.write(invalid), 0); }
         catch (const std::runtime_error& error) {
@@ -193,6 +194,24 @@ void configured_projectile_count_spawns_a_group_and_survives_reset() {
     require(range.projectiles_per_shot() == 8 && range.projectiles_fired() == 0,
             "Range reset lost the configured group or retained shot statistics");
 }
+void fire_mode_configuration_limits_selection_and_sets_burst_size() {
+    using weapon_library::FireMode;
+    ConfigFixture fixture;
+    const auto config = weapon_range::load_visual(fixture.write("fire_modes = semi burst\nburst_size = 4\n"), 1);
+    weapon_range::RangeSimulation range;
+    range.select_weapon(1);
+    range.set_fire_mode_settings(1, config.fire_modes);
+    require(range.weapon_state().fire_mode == FireMode::SemiAutomatic && range.cycle_fire_mode() &&
+            range.weapon_state().fire_mode == FireMode::Burst, "Config did not fall back from the removed automatic mode");
+    range.set_trigger(true);
+    range.set_trigger(false);
+    range.advance(0.4);
+    require(range.shots() == 4 && range.cycle_fire_mode() && range.weapon_state().fire_mode == FireMode::SemiAutomatic,
+            "Config did not set a four-shot burst or restrict the selector");
+    range.reset();
+    range.select_weapon(1);
+    require(range.weapon_state().fire_mode == FireMode::SemiAutomatic, "Reset lost the configured initial mode");
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -203,6 +222,7 @@ int main(int argc, char** argv) {
         aim_sway_config_applies_per_weapon_and_survives_reset();
         lowered_animation_and_timing_load_from_the_weapon_file();
         configured_projectile_count_spawns_a_group_and_survives_reset();
+        fire_mode_configuration_limits_selection_and_sets_burst_size();
         std::cout << "Visual config and socket tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';

@@ -378,7 +378,10 @@ void draw_hud(const RangeSimulation& range, Camera3D camera, bool playing, bool 
         text(buffer, 40, bottom + 39, 42, state.rounds_remaining ? white : accent);
         std::snprintf(buffer, sizeof(buffer), "/ %02u", spec.capacity);
         text(buffer, 106, bottom + 56, 20, muted);
-        text(spec.mode == weapon_library::FireMode::SemiAutomatic ? "SEMI AUTO" : "FULL AUTO", 172, bottom + 45, 15, teal);
+        using weapon_library::FireMode;
+        const char* mode = state.fire_mode == FireMode::Automatic ? "FULL AUTO" :
+            state.fire_mode == FireMode::Burst ? "BURST" : "SEMI AUTO";
+        text(mode, 172, bottom + 45, 15, teal);
         std::snprintf(buffer, sizeof(buffer), "%03.0f RPM", 60.0 / spec.interval_seconds);
         text(buffer, 172, bottom + 68, 15, muted);
         std::snprintf(buffer, sizeof(buffer), "MUZZLE  %.0f M/S", spec.muzzle_speed_m_s);
@@ -420,7 +423,7 @@ void draw_hud(const RangeSimulation& range, Camera3D camera, bool playing, bool 
         centered(i == knife_index ? "KNIFE" : weapon_specs()[i].name, x + 53, bottom + 120, 16, selected ? accent : white);
     }
     DrawRectangle(0, height - 34, width, 34, ink);
-    centered("WASD MOVE  SHIFT SPRINT  RMB AIM  LMB/F ATTACK  R RELOAD  Q CANCEL  1-4 WEAPON  C CROSSHAIR  V SLOW  F5 CONFIG  HOME RESET  ESC PAUSE", width / 2, height - 23, width < 1200 ? 11 : 13, muted);
+    centered("WASD MOVE  SHIFT SPRINT  RMB AIM  LMB/F ATTACK  B MODE  R RELOAD  Q CANCEL  1-4 WEAPON  C CROSSHAIR  V SLOW  F5 CONFIG  HOME RESET  ESC PAUSE", width / 2, height - 23, width < 1200 ? 11 : 13, muted);
     const int cx = width / 2, cy = height / 2;
     if (show_crosshair && range.attack_allowed()) draw_crosshair(range, camera, handling.spread_half_angle_rad);
     if (!range.is_melee() && !state.reload.active && range.time() - range.last_dry_time() < 0.9)
@@ -464,7 +467,10 @@ bool RangeRenderer::reload_visuals(RangeSimulation& range) {
             range.set_presentation(i, config.presentation);
             range.set_aim_sway(i, config.aim_sway);
             range.set_lowered_stance_timing(i, config.stance_timing);
-            if (i < firearm_count) range.set_projectiles_per_shot(i, config.projectiles_per_shot);
+            if (i < firearm_count) {
+                range.set_projectiles_per_shot(i, config.projectiles_per_shot);
+                range.set_fire_mode_settings(i, config.fire_modes);
+            }
         }
         impl_ = std::move(replacement);
         status_ = "WEAPON CONFIG LOADED / F5 TO REFRESH";

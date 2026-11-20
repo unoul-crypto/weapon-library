@@ -4,10 +4,26 @@
 #include <weapon_library/Ammunition.h>
 
 #include <variant>
+#include <vector>
 
 namespace weapon_library {
 
-enum class FireMode { SemiAutomatic, Automatic };
+enum class FireMode { SemiAutomatic, Automatic, Burst };
+
+class FireModeSettings {
+public:
+    explicit FireModeSettings(FireMode initial = FireMode::SemiAutomatic,
+                              std::vector<FireMode> available = {}, std::uint32_t burst_size = 3);
+    FireMode initial_mode() const noexcept { return initial_; }
+    const std::vector<FireMode>& available_modes() const noexcept { return available_; }
+    std::uint32_t burst_size() const noexcept { return burst_size_; }
+    bool supports(FireMode mode) const noexcept;
+
+private:
+    FireMode initial_;
+    std::vector<FireMode> available_;
+    std::uint32_t burst_size_;
+};
 
 struct FiringDefinition {
     ActionId action_id = 0;
@@ -18,6 +34,8 @@ struct FiringDefinition {
     std::uint32_t rounds_per_shot = 1;
     std::optional<ActionId> reload_action_id; // Must differ from the firing action.
     std::uint32_t projectiles_per_shot = 1; // Independent of magazine cost.
+    std::vector<FireMode> available_modes; // Empty means only mode is available.
+    std::uint32_t burst_size = 3;
 };
 
 enum class TriggerCommand { Press, Release };
@@ -66,6 +84,8 @@ struct FiringState {
     double cooldown_remaining_seconds;
     ReloadState reload;
     bool requires_trigger_release = false;
+    FireMode fire_mode = FireMode::SemiAutomatic;
+    std::uint32_t burst_shots_remaining = 0; // Excludes any action already started.
 };
 
 struct ReloadCommandResult {
@@ -94,11 +114,18 @@ public:
     std::uint32_t projectiles_per_shot() const noexcept { return projectiles_per_shot_; }
     // Updates the next emitted shot. The immutable definition remains the initial preset.
     void set_projectiles_per_shot(std::uint32_t count);
+    const FireModeSettings& fire_mode_settings() const noexcept { return fire_mode_settings_; }
+    bool set_fire_mode(FireMode mode) noexcept; // Returns false for an unavailable mode.
+    // Keeps the active mode when supported. The initial mode is used as fallback.
+    void set_fire_mode_settings(FireModeSettings settings) noexcept;
+    // Stops unstarted shots and requires release if the trigger is still held.
+    void interrupt_trigger() noexcept;
 
     // Press/Release are edges. Repeated Press while held is harmless.
-    // Semi-auto does not queue presses during cooldown or a running action.
+    // Semi and burst do not queue presses during cooldown or a running action.
+    // Burst finishes the accepted group after Release.
     std::vector<FiringEvent> execute(TriggerCommand command);
-    // Automatic mode fires at every eligible boundary, including the end of a step.
+    // Automatic and pending burst shots fire at eligible boundaries, including the end of a step.
     std::vector<FiringEvent> advance(double seconds);
     // An accepted cancellation releases the trigger; blocked cancellation changes nothing.
     FiringCancelResult cancel_action();
@@ -108,13 +135,16 @@ public:
     ReloadCommandResult cancel_reload();
 
 private:
-    void try_start(std::vector<FiringEvent>& events);
+    bool try_start(std::vector<FiringEvent>& events);
     void append_events(const std::vector<WeaponEvent>& events,
                        std::vector<FiringEvent>& output);
     void begin_reload_if_ready(std::vector<FiringEvent>& events);
 
     Weapon weapon_;
     const FiringDefinition definition_;
+    FireModeSettings fire_mode_settings_;
+    FireMode fire_mode_;
+    std::uint32_t burst_shots_remaining_ = 0;
     bool trigger_held_ = false;
     bool dry_fire_reported_ = false;
     std::uint32_t rounds_remaining_;

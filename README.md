@@ -1,4 +1,4 @@
-# Weapon Library v0.15.0
+# Weapon Library v0.16.0
 
 A small C++17 foundation for reusable weapon mechanics. The core has no external
 dependencies, graphics, physics engine, platform calls or wall-clock access.
@@ -103,6 +103,7 @@ increase the target hit counter. Use V to inspect the drop.
 | R | Reload from this weapon's reserve |
 | Q | Cancel reload or the current knife swing |
 | C | Toggle the crosshair and spread ring |
+| B | Cycle the equipped firearm's available modes |
 | F5 | Reload weapon settings without resetting the session |
 | Shift | Lower the weapon and interrupt a cancellable reload |
 | Shift+W | Sprint forward with the weapon lowered |
@@ -134,6 +135,12 @@ and reusable library API.
 Set `projectiles_per_shot = 8` in a firearm's `.weapon` file and press F5 to
 try a multi-projectile shot. The range spends one round and tracks each
 projectile's hit separately. See [projectile groups](docs/firing.md#projectile-groups).
+
+The rifle demonstrates semi-automatic, burst and fully automatic fire.
+Press B to cycle its modes. The pistol has semi-automatic fire and the turret
+has fully automatic fire. Set `fire_modes = semi burst` and `burst_size = 3` in
+a firearm's `.weapon` file and press F5 to try a two-mode setup.
+[Fire mode settings](docs/firing.md#fire-modes)
 
 The knife has a 0.16 s windup, a 0.18 s active thrust, 0.28 s recovery and 1.6 m reach.
 Its directed attack follows the aim line; contact markers lie on real surfaces.

@@ -20,6 +20,7 @@ struct RangeVisualDefinition {
     weapon_library::AimSwaySettings aim_sway;
     weapon_library::LoweredStanceTiming stance_timing;
     std::uint32_t projectiles_per_shot = 1;
+    weapon_library::FireModeSettings fire_modes;
     std::filesystem::path model_file;
     ModelTransform model_transform;
     std::filesystem::path animation_file;

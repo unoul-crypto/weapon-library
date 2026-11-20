@@ -359,6 +359,30 @@ void lowering_interrupts_queued_and_active_reloads() {
     }
 }
 
+void selectable_fire_modes_and_lowering_interrupt_a_burst() {
+    using weapon_library::FireMode;
+    weapon_range::RangeSimulation range;
+    require(!range.cycle_fire_mode() && range.weapon_state().fire_mode == FireMode::SemiAutomatic,
+            "Single-mode pistol exposed another mode");
+    range.select_weapon(1);
+    require(range.cycle_fire_mode() && range.weapon_state().fire_mode == FireMode::SemiAutomatic &&
+            range.cycle_fire_mode() && range.weapon_state().fire_mode == FireMode::Burst,
+            "Rifle did not cycle through its configured modes");
+    range.set_trigger(true);
+    range.set_trigger(false);
+    range.advance(0.25);
+    require(range.shots() == 3 && range.weapon_state().rounds_remaining == 27, "Tap did not fire a three-shot burst");
+    range.advance(0.1);
+    range.set_trigger(true);
+    range.set_trigger(false);
+    range.set_stance_input(false, true);
+    range.advance(0.4);
+    require(range.shots() == 4 && range.weapon_state().burst_shots_remaining == 0,
+            "A released-trigger burst kept firing while the weapon lowered");
+    require(range.cycle_fire_mode() && range.weapon_state().fire_mode == FireMode::Automatic,
+            "Rifle did not cycle back to its first mode");
+}
+
 void approach_melee_target(weapon_range::RangeSimulation& range) {
     range.advance(2.3 / 3.2, 0, -1);
     range.advance(0.28, 1, 0);
@@ -491,6 +515,7 @@ int main() {
         reload_preserves_scene_stats_and_ammunition();
         sprint_lowers_the_weapon_and_requires_a_fresh_trigger_press();
         lowering_interrupts_queued_and_active_reloads();
+        selectable_fire_modes_and_lowering_interrupt_a_burst();
         melee_reach_phases_hold_and_ammunition();
         melee_cancellation_direction_cover_and_movement();
         melee_contacts_follow_aim_and_lie_on_real_surfaces();

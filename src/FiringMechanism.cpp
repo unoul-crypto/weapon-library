@@ -8,15 +8,35 @@
 #include <utility>
 
 namespace weapon_library {
+namespace {
+bool known_fire_mode(FireMode mode) noexcept {
+    return mode == FireMode::SemiAutomatic || mode == FireMode::Automatic || mode == FireMode::Burst;
+}
+} // namespace
+
+FireModeSettings::FireModeSettings(FireMode initial, std::vector<FireMode> available, std::uint32_t burst_size)
+    : initial_(initial), available_(std::move(available)), burst_size_(burst_size) {
+    if (!known_fire_mode(initial)) throw std::invalid_argument("Unknown initial fire mode");
+    if (available_.empty()) available_.push_back(initial);
+    for (auto it = available_.begin(); it != available_.end(); ++it) {
+        if (!known_fire_mode(*it) || std::find(available_.begin(), it, *it) != it)
+            throw std::invalid_argument("Fire modes must be known and unique");
+    }
+    if (!supports(initial)) throw std::invalid_argument("Initial fire mode must be available");
+    if (supports(FireMode::Burst) && burst_size_ < 2)
+        throw std::invalid_argument("Burst mode requires at least two shots");
+}
+
+bool FireModeSettings::supports(FireMode mode) const noexcept {
+    return std::find(available_.begin(), available_.end(), mode) != available_.end();
+}
 
 FiringMechanism::FiringMechanism(std::shared_ptr<const WeaponDefinition> weapon_definition,
                                FiringDefinition firing_definition,
                                std::uint32_t initial_rounds)
-    : weapon_(std::move(weapon_definition)), definition_(firing_definition),
-      rounds_remaining_(initial_rounds) {
-    if (definition_.mode != FireMode::SemiAutomatic && definition_.mode != FireMode::Automatic) {
-        throw std::invalid_argument("Unknown firing mode");
-    }
+    : weapon_(std::move(weapon_definition)), definition_(std::move(firing_definition)),
+      fire_mode_settings_(definition_.mode, definition_.available_modes, definition_.burst_size),
+      fire_mode_(definition_.mode), rounds_remaining_(initial_rounds) {
     if (!detail::valid_duration(definition_.shot_interval_seconds) ||
         definition_.shot_interval_seconds == 0.0) {
         throw std::invalid_argument("Shot interval must be finite and positive");
@@ -26,7 +46,7 @@ FiringMechanism::FiringMechanism(std::shared_ptr<const WeaponDefinition> weapon_
         rounds_remaining_ > definition_.magazine_capacity) {
         throw std::invalid_argument("Invalid magazine capacity, shot cost or initial ammo");
     }
-    set_projectiles_per_shot(firing_definition.projectiles_per_shot);
+    set_projectiles_per_shot(definition_.projectiles_per_shot);
     const auto& actions = weapon_.definition().actions();
     const auto action = std::find_if(actions.begin(), actions.end(), [&](const auto& value) {
         return value.id == definition_.action_id;
@@ -56,6 +76,30 @@ void FiringMechanism::set_projectiles_per_shot(std::uint32_t count) {
     projectiles_per_shot_ = count;
 }
 
+bool FiringMechanism::set_fire_mode(FireMode mode) noexcept {
+    if (!fire_mode_settings_.supports(mode)) return false;
+    if (fire_mode_ != mode) {
+        interrupt_trigger();
+        fire_mode_ = mode;
+    }
+    return true;
+}
+
+void FiringMechanism::set_fire_mode_settings(FireModeSettings settings) noexcept {
+    if (!settings.supports(fire_mode_)) {
+        interrupt_trigger();
+        fire_mode_ = settings.initial_mode();
+    } else if (fire_mode_ == FireMode::Burst && settings.burst_size() != fire_mode_settings_.burst_size()) {
+        interrupt_trigger();
+    }
+    fire_mode_settings_ = std::move(settings);
+}
+
+void FiringMechanism::interrupt_trigger() noexcept {
+    burst_shots_remaining_ = 0;
+    if (trigger_held_) requires_trigger_release_ = true;
+}
+
 FiringState FiringMechanism::state() const noexcept {
     ReloadState reload;
     const auto weapon = weapon_.state();
@@ -72,7 +116,8 @@ FiringState FiringMechanism::state() const noexcept {
                 reload.remaining_seconds += action.recovery_seconds;
         }
     }
-    return {weapon, trigger_held_, rounds_remaining_, cooldown_remaining_, reload, requires_trigger_release_};
+    return {weapon, trigger_held_, rounds_remaining_, cooldown_remaining_, reload, requires_trigger_release_,
+            fire_mode_, burst_shots_remaining_};
 }
 
 std::vector<FiringEvent> FiringMechanism::execute(TriggerCommand command) {
@@ -82,7 +127,12 @@ std::vector<FiringEvent> FiringMechanism::execute(TriggerCommand command) {
         if (!trigger_held_) {
             trigger_held_ = true;
             if (reload_source_) requires_trigger_release_ = true;
-            try_start(events);
+            if (fire_mode_ != FireMode::Burst) {
+                try_start(events);
+            } else if (burst_shots_remaining_ == 0) {
+                const auto count = std::min(fire_mode_settings_.burst_size(), rounds_remaining_ / definition_.rounds_per_shot);
+                if (try_start(events)) burst_shots_remaining_ = count - 1;
+            }
         }
         return events;
     case TriggerCommand::Release:
@@ -116,8 +166,10 @@ std::vector<FiringEvent> FiringMechanism::advance(double seconds) {
         detail::consume_duration(seconds, step, step_rounding_error);
         append_events(transitions, events);
         begin_reload_if_ready(events);
-        if (trigger_held_ && definition_.mode == FireMode::Automatic) {
+        if (trigger_held_ && fire_mode_ == FireMode::Automatic) {
             try_start(events);
+        } else if (burst_shots_remaining_ > 0 && try_start(events)) {
+            --burst_shots_remaining_;
         }
     }
     return events;
@@ -130,6 +182,7 @@ FiringCancelResult FiringMechanism::cancel_action() {
     FiringCancelResult output{result.status, {}};
     append_events(result.events, output.events);
     if (result.accepted()) {
+        burst_shots_remaining_ = 0;
         if (reload_source_) {
             auto cancelled = cancel_reload(); // Also discard a queued reload intent.
             output.events.insert(output.events.end(), cancelled.events.begin(), cancelled.events.end());
@@ -141,16 +194,16 @@ FiringCancelResult FiringMechanism::cancel_action() {
     return output;
 }
 
-void FiringMechanism::try_start(std::vector<FiringEvent>& events) {
+bool FiringMechanism::try_start(std::vector<FiringEvent>& events) {
     if (reload_source_ || requires_trigger_release_ || weapon_.state().phase != Phase::Ready || cooldown_remaining_ > 0.0) {
-        return;
+        return false;
     }
     if (rounds_remaining_ < definition_.rounds_per_shot) {
         if (!dry_fire_reported_) {
             events.emplace_back(DryFireEvent{definition_.action_id, weapon_.state().time_seconds});
             dry_fire_reported_ = true;
         }
-        return;
+        return false;
     }
     const auto result = weapon_.execute(WeaponCommand::start(definition_.action_id));
     if (!result.accepted()) {
@@ -159,6 +212,7 @@ void FiringMechanism::try_start(std::vector<FiringEvent>& events) {
     cooldown_remaining_ = definition_.shot_interval_seconds;
     cooldown_rounding_error_ = 0.0;
     append_events(result.events, events);
+    return true;
 }
 
 void FiringMechanism::append_events(const std::vector<WeaponEvent>& events,
@@ -198,6 +252,7 @@ ReloadCommandResult FiringMechanism::request_reload(std::shared_ptr<AmmunitionSo
         return {ReloadStatus::MagazineFull, {}};
     if (source->available_rounds() == 0) return {ReloadStatus::NoAmmunition, {}};
     reload_source_ = std::move(source);
+    burst_shots_remaining_ = 0;
     requires_trigger_release_ = trigger_held_;
     dry_fire_reported_ = false;
     ReloadCommandResult result{ReloadStatus::Accepted, {}};

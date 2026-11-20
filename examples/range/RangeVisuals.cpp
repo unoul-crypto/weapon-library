@@ -26,6 +26,28 @@ template <typename... Values> void numbers(const std::string& value, Values&... 
     if (!input.eof()) throw std::invalid_argument("Unexpected text after numbers");
 }
 void vector(const std::string& value, weapon_library::math::Vec3& v) { numbers(value, v.x, v.y, v.z); }
+
+std::uint32_t whole_number(const std::string& value, std::uint32_t minimum, std::uint32_t maximum) {
+    double count = 0.0;
+    numbers(value, count);
+    if (count < minimum || count > maximum || std::trunc(count) != count)
+        throw std::invalid_argument("Expected an integer from " + std::to_string(minimum) + " to " + std::to_string(maximum));
+    return static_cast<std::uint32_t>(count);
+}
+
+std::vector<weapon_library::FireMode> parse_fire_modes(const std::string& value) {
+    using weapon_library::FireMode;
+    std::istringstream input(value);
+    std::vector<FireMode> modes;
+    for (std::string mode; input >> mode;) {
+        if (mode == "semi") modes.push_back(FireMode::SemiAutomatic);
+        else if (mode == "burst") modes.push_back(FireMode::Burst);
+        else if (mode == "auto") modes.push_back(FireMode::Automatic);
+        else throw std::invalid_argument("Fire modes must be semi, burst or auto");
+    }
+    if (modes.empty()) throw std::invalid_argument("At least one fire mode is required");
+    return modes;
+}
 } // namespace
 
 RangeVisualDefinition default_visual(unsigned weapon_index) {
@@ -44,7 +66,9 @@ RangeVisualDefinition default_visual(unsigned weapon_index) {
     RangeVisualDefinition result;
     result.presentation = weapon_library::WeaponPresentation(std::move(definition));
     if (weapon_index < firearm_count) {
-        const auto& handling = weapon_specs()[weapon_index].handling;
+        const auto& spec = weapon_specs()[weapon_index];
+        const auto& handling = spec.handling;
+        result.fire_modes = weapon_library::FireModeSettings(spec.mode, spec.available_modes);
         result.aim_sway = {handling.aimed_sway_amplitude_rad, handling.aimed_sway_frequency_hz};
     }
     return result;
@@ -58,6 +82,8 @@ RangeVisualDefinition load_visual(const std::filesystem::path& file, unsigned we
     auto lower_seconds = result.stance_timing.lower_seconds();
     auto raise_ready_seconds = result.stance_timing.raise_to_ready_seconds();
     auto raise_aim_seconds = result.stance_timing.raise_to_aim_seconds();
+    auto fire_modes = result.fire_modes.available_modes();
+    auto burst_size = result.fire_modes.burst_size();
     std::ifstream input(file);
     if (!input) throw std::runtime_error("Cannot open visual config: " + file.filename().string());
     std::set<std::string> seen;
@@ -102,11 +128,12 @@ RangeVisualDefinition load_visual(const std::filesystem::path& file, unsigned we
             else if (key == "projectiles_per_shot") {
                 if (weapon_index >= firearm_count)
                     throw std::invalid_argument("projectiles_per_shot is only used by firearms");
-                double count = 0.0;
-                numbers(value, count);
-                if (count < 1.0 || count > 64.0 || std::trunc(count) != count)
-                    throw std::invalid_argument("Range projectile count must be an integer from 1 to 64");
-                result.projectiles_per_shot = static_cast<std::uint32_t>(count);
+                result.projectiles_per_shot = whole_number(value, 1, 64);
+            }
+            else if (key == "fire_modes" || key == "burst_size") {
+                if (weapon_index >= firearm_count) throw std::invalid_argument("Fire modes are only used by firearms");
+                if (key == "fire_modes") fire_modes = parse_fire_modes(value);
+                else burst_size = whole_number(value, 2, 64);
             }
             else if (key == "reload_interpolation" || key == "attack_interpolation" || key == "lower_interpolation") {
                 auto& interpolation = key == "reload_interpolation" ? definition.interpolation :
@@ -140,6 +167,8 @@ RangeVisualDefinition load_visual(const std::filesystem::path& file, unsigned we
         result.presentation = weapon_library::WeaponPresentation(std::move(definition));
         result.aim_sway = {aim_sway_amplitude, aim_sway_frequency};
         result.stance_timing = {lower_seconds, raise_ready_seconds, raise_aim_seconds};
+        const auto initial_mode = fire_modes.front();
+        result.fire_modes = weapon_library::FireModeSettings(initial_mode, std::move(fire_modes), burst_size);
         if (!result.model_file.empty()) result.model_file = (file.parent_path() / result.model_file).lexically_normal();
         if (!result.animation_file.empty()) result.animation_file = (file.parent_path() / result.animation_file).lexically_normal();
         else if (has_clip) result.animation_file = result.model_file;

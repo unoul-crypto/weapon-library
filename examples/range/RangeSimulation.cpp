@@ -236,6 +236,8 @@ const std::array<WeaponSpec, 3>& weapon_specs() {
         values[1].handling.aimed_sway_amplitude_rad = {0.0035, 0.0025};
         values[1].reserve_rounds = 150;
         values[1].reload_seconds = 1.8;
+        values[1].available_modes = {weapon_library::FireMode::Automatic, weapon_library::FireMode::SemiAutomatic,
+                                     weapon_library::FireMode::Burst};
         values[2].handling.hip_spread_rad = 0.014;
         values[2].handling.aimed_spread_rad = 0.0015;
         values[2].handling.recoil_per_shot.pitch_rad = 0.004;
@@ -267,8 +269,10 @@ void RangeSimulation::reset() {
         const auto actions = std::make_shared<const WeaponDefinition>(std::vector<ActionDefinition>{
             {1, 0.0, 0.0, 0.045}, {2, spec.reload_seconds, 0.0, 0.0, {true, true, true}}});
         const auto projectile_count = weapons_[i] ? weapons_[i]->projectiles_per_shot() : 1u;
+        const auto modes = weapons_[i] ? weapons_[i]->fire_mode_settings() : FireModeSettings(spec.mode, spec.available_modes);
         weapons_[i] = std::make_unique<FiringMechanism>(
-            actions, FiringDefinition{1, spec.mode, spec.interval_seconds, spec.capacity, 1, 2, projectile_count}, spec.capacity);
+            actions, FiringDefinition{1, modes.initial_mode(), spec.interval_seconds, spec.capacity, 1, 2, projectile_count,
+                                      modes.available_modes(), modes.burst_size()}, spec.capacity);
         handling_[i] = std::make_unique<WeaponHandling>(spec.handling, 0x92d68ca2u + static_cast<std::uint32_t>(i) * 7919u);
         reserves_[i] = std::make_shared<AmmunitionReserve>(spec.reserve_rounds);
     }
@@ -308,7 +312,7 @@ void RangeSimulation::select_weapon(unsigned index) {
         throw std::invalid_argument("Unknown range weapon");
     }
     if (index == selected_) return;
-    set_trigger(false);
+    interrupt_trigger();
     if (is_melee()) cancel_attack();
     else if (weapons_[selected_]->state().reload.active) cancel_reload();
     handling_[selected_]->set_aiming(false);
@@ -337,6 +341,7 @@ void RangeSimulation::set_stance_input(bool aiming, bool lower) {
     auto target = HandlingStance::Ready;
     if (lower && !reloading && !melee_busy) {
         target = HandlingStance::Lowered;
+        if (!is_melee()) weapons_[selected_]->interrupt_trigger();
         const bool held = is_melee() ? melee_trigger_held_ : weapon.trigger_held;
         if (held) {
             set_trigger(false);
@@ -416,6 +421,24 @@ void RangeSimulation::set_projectiles_per_shot(unsigned index, std::uint32_t cou
     weapons_[index]->set_projectiles_per_shot(count);
 }
 
+void RangeSimulation::set_fire_mode_settings(unsigned index, weapon_library::FireModeSettings settings) {
+    if (index >= weapons_.size()) throw std::invalid_argument("Unknown range firearm");
+    weapons_[index]->set_fire_mode_settings(std::move(settings));
+}
+
+bool RangeSimulation::cycle_fire_mode() {
+    if (is_melee()) return false;
+    auto& weapon = *weapons_[selected_];
+    const auto& modes = weapon.fire_mode_settings().available_modes();
+    if (modes.size() < 2) return false;
+    const auto current = std::find(modes.begin(), modes.end(), weapon.state().fire_mode);
+    if (current == modes.end()) return false;
+    const auto next = current + 1 == modes.end() ? modes.front() : *(current + 1);
+    weapon.set_fire_mode(next);
+    set_trigger(false);
+    return true;
+}
+
 std::uint32_t RangeSimulation::projectiles_per_shot() const noexcept {
     return is_melee() ? 0 : weapons_[selected_]->projectiles_per_shot();
 }
@@ -468,6 +491,11 @@ void RangeSimulation::set_trigger(bool held) {
     }
     consume(weapons_[selected_]->execute(held ? weapon_library::TriggerCommand::Press
                                             : weapon_library::TriggerCommand::Release), selected_);
+}
+
+void RangeSimulation::interrupt_trigger() {
+    if (!is_melee()) weapons_[selected_]->interrupt_trigger();
+    set_trigger(false);
 }
 
 void RangeSimulation::look(double yaw_delta, double pitch_delta) {

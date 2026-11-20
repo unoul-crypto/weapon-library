@@ -38,11 +38,42 @@ nothing. Input can come from a mouse, gamepad, AI or turret controller.
 - **Automatic:** a fresh press tries immediately. While held, `advance()` attempts
   subsequent actions as soon as both the previous action and cooldown are done.
   Holding through a blocked press therefore resumes fire when eligible.
+- **Burst:** a fresh eligible press starts up to `burst_size` shots at the normal
+  cadence. A short tap finishes the burst, and another burst requires a fresh
+  press after recovery and cooldown. With limited ammo, the burst fires the
+  available whole shots. A press during a burst or cooldown is discarded.
 
 Release prevents subsequent automatic actions. It does not cancel an action that
 has already started: a pending windup can still produce its committed shot.
-The host should send Release when disabling the controlling input, switching
-equipment or leaving a turret. Pause the simulation by not advancing time.
+Call `interrupt_trigger()` to stop pending burst or automatic actions when
+disabling input, lowering or switching equipment. If the trigger is held,
+Release and a fresh Press are required. The committed action can still finish.
+An accepted reload or action cancellation clears the burst's pending shots.
+Pause the simulation by not advancing time.
+
+## Fire modes
+
+Use `FiringDefinition::mode` for the initial mode and `available_modes` for the
+allowed list. An empty list exposes only the initial mode. An explicit list
+must contain the initial mode and include only unique valid modes. A list
+containing Burst requires `burst_size` of at least two. Use `set_fire_mode()`
+to select a supported mode and `state().fire_mode` to read it. Selecting a
+different mode interrupts pending burst shots and requires release if the
+trigger is held.
+
+In the range, edit a firearm's `.weapon` file and press F5.
+
+```ini
+fire_modes = semi burst
+burst_size = 3
+```
+
+Use `semi`, `burst` or `auto` in the order the B selector should cycle them.
+The first entry is the initial mode. Live updates keep the selected mode
+if supported. Removing it selects the new first entry. Changing the active
+burst's length stops its remaining shots. The range accepts burst sizes from
+2 to 64. Burst size counts shots. Each shot spends its own ammo and can launch
+its own group of projectiles.
 
 ## Shots, ammo and cancellation
 

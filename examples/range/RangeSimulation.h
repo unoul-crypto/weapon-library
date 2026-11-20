@@ -66,6 +66,7 @@ struct WeaponSpec {
     weapon_library::HandlingDefinition handling;
     unsigned reserve_rounds = 0;
     double reload_seconds = 1.5;
+    std::vector<weapon_library::FireMode> available_modes;
 };
 
 const std::array<WeaponSpec, 3>& weapon_specs();
@@ -77,6 +78,8 @@ public:
     void reset();
     void select_weapon(unsigned index);
     void set_trigger(bool held);
+    void interrupt_trigger();
+    bool cycle_fire_mode();
     weapon_library::ReloadStatus request_reload();
     weapon_library::ReloadStatus cancel_reload();
     weapon_library::CommandStatus cancel_attack();
@@ -95,6 +98,7 @@ public:
     void set_aim_sway(unsigned index, weapon_library::AimSwaySettings settings);
     void set_lowered_stance_timing(unsigned index, weapon_library::LoweredStanceTiming timing);
     void set_projectiles_per_shot(unsigned index, std::uint32_t count);
+    void set_fire_mode_settings(unsigned index, weapon_library::FireModeSettings settings);
     std::uint32_t projectiles_per_shot() const noexcept;
     const weapon_library::WeaponPresentation& presentation() const { return presentation_[selected_]; }
     weapon_library::PresentationPose sway_pose() const;
