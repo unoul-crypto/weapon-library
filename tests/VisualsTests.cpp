@@ -28,8 +28,7 @@ struct ConfigFixture {
 };
 void configs_and_muzzle(const std::filesystem::path& assets) {
     for (unsigned i = 0; i < weapon_range::weapon_count; ++i) {
-        const char* names[] = {"pistol.weapon", "rifle.weapon", "turret.weapon", "knife.weapon"};
-        const auto visual = weapon_range::load_visual(assets / names[i], i);
+        const auto visual = weapon_range::load_visual(assets / weapon_range::visual_filename(i), i);
         if (i == weapon_range::knife_index)
             require(!visual.presentation.definition().attack_keyframes.empty(), "Bundled knife motion is missing");
         else require(!visual.presentation.definition().reload_keyframes.empty(), "Bundled reload motion is missing");
@@ -63,7 +62,7 @@ void configs_and_muzzle(const std::filesystem::path& assets) {
             "aimed_sway_frequency_hz = -0.5\n", "raise_to_aim_seconds = -0.1\n",
             "lower_key = 0.5 0 0 0 0 0 0\n", "projectiles_per_shot = 0\n",
             "projectiles_per_shot = 3.5\n", "projectiles_per_shot = 65\n", "fire_modes =\n",
-            "fire_modes = single\n", "fire_modes = burst burst\n", "burst_size = 1\n"}) {
+            "fire_modes = single\n", "fire_modes = burst burst\n", "burst_size = 1\n", "reload_mode = mixed\n"}) {
         bool rejected = false;
         try { weapon_range::load_visual(fixture.write(invalid), 0); }
         catch (const std::runtime_error& error) {
@@ -212,6 +211,59 @@ void fire_mode_configuration_limits_selection_and_sets_burst_size() {
     range.select_weapon(1);
     require(range.weapon_state().fire_mode == FireMode::SemiAutomatic, "Reset lost the configured initial mode");
 }
+void configured_per_round_reload_preserves_inserted_ammo_on_shift() {
+    ConfigFixture fixture;
+    const auto config = weapon_range::load_visual(fixture.write("reload_mode = per_round\n"), 0);
+    weapon_range::RangeSimulation range;
+    range.set_reload_mode(0, config.reload_mode);
+    range.reset();
+    range.set_trigger(true);
+    range.set_trigger(false);
+    range.advance(0.21);
+    range.set_trigger(true);
+    range.set_trigger(false);
+    const auto reserve = range.reserve_rounds();
+    require(range.request_reload() == weapon_library::ReloadStatus::Accepted, "Configured reload did not start");
+    range.advance(0.6);
+    require(range.weapon_state().reload.active && range.weapon_state().reload.rounds_inserted == 1 &&
+            range.weapon_state().rounds_remaining == 11 && range.reserve_rounds() == reserve - 1,
+            "Range did not perform one insertion with the configured mode");
+    range.set_stance_input(false, true);
+    range.advance(1.0);
+    require(!range.weapon_state().reload.active && range.last_reload_cancelled() &&
+            range.weapon_state().rounds_remaining == 11 && range.reserve_rounds() == reserve - 1,
+            "Interrupting through Shift discarded the inserted round or loaded another");
+}
+void shotgun_preset_keeps_inserted_shells(const std::filesystem::path& assets) {
+    using namespace weapon_range;
+    using weapon_library::ReloadMode;
+    using weapon_library::ReloadStatus;
+    require(weapon_key_order[4] == shotgun_index && weapon_key_order[3] == knife_index, "Practice controls changed");
+    const auto config = load_visual(assets / visual_filename(shotgun_index), shotgun_index);
+    RangeSimulation range;
+    range.set_projectiles_per_shot(shotgun_index, config.projectiles_per_shot);
+    range.set_reload_mode(shotgun_index, config.reload_mode);
+    range.select_weapon(shotgun_index);
+    require(range.weapon_state().reload.mode == ReloadMode::PerRound && range.projectiles_per_shot() == 8,
+            "Bundled shotgun did not expose its practice settings");
+    const auto capacity = range.weapon_state().rounds_remaining;
+    const auto reserve = range.reserve_rounds();
+    for (int i = 0; i < 3; ++i) {
+        range.set_trigger(true);
+        range.set_trigger(false);
+        range.advance(0.5);
+    }
+    require(range.shots() == 3 && range.projectiles_fired() == 24 && range.weapon_state().rounds_remaining == capacity - 3,
+            "Shotgun group spent more than one shell");
+    require(range.request_reload() == ReloadStatus::Accepted, "Shotgun did not start reloading");
+    range.advance(1.0);
+    require(range.weapon_state().reload.active && range.weapon_state().reload.rounds_inserted == 2,
+            "Shotgun did not insert two shells before cancellation");
+    require(range.cancel_reload() == ReloadStatus::Accepted, "Shotgun refused to cancel");
+    range.advance(2.0);
+    require(range.weapon_state().rounds_remaining == capacity - 1 && range.reserve_rounds() == reserve - 2,
+            "Shotgun cancellation did not preserve exactly two inserted shells");
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -223,6 +275,8 @@ int main(int argc, char** argv) {
         lowered_animation_and_timing_load_from_the_weapon_file();
         configured_projectile_count_spawns_a_group_and_survives_reset();
         fire_mode_configuration_limits_selection_and_sets_burst_size();
+        configured_per_round_reload_preserves_inserted_ammo_on_shift();
+        shotgun_preset_keeps_inserted_shells(argv[1]);
         std::cout << "Visual config and socket tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';

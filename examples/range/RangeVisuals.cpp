@@ -50,12 +50,25 @@ std::vector<weapon_library::FireMode> parse_fire_modes(const std::string& value)
 }
 } // namespace
 
+const char* visual_filename(unsigned weapon_index) {
+    constexpr std::array<const char*, weapon_count> names{
+        "pistol.weapon", "rifle.weapon", "turret.weapon", "shotgun.weapon", "knife.weapon"
+    };
+    return names.at(weapon_index);
+}
+
 RangeVisualDefinition default_visual(unsigned weapon_index) {
     if (weapon_index >= weapon_count) throw std::invalid_argument("Unknown range weapon");
     weapon_library::PresentationDefinition definition;
-    constexpr double masses[weapon_count] = {0.9, 3.5, 12.0, 0.35};
+    constexpr double masses[weapon_count] = {0.9, 3.5, 12.0, 3.8, 0.35};
     definition.mass_kg = masses[weapon_index];
     if (weapon_index == 0) definition.muzzle_offset.z = 0.22;
+    if (weapon_index == shotgun_index) {
+        definition.hip_offset = {0.24, -0.24, 0.6};
+        definition.aimed_offset = {0.0, -0.065, 0.52};
+        definition.muzzle_offset = {0.0, 0.025, 0.56};
+        definition.reload_keyframes = {{0, {}}, {0.42, {{0.025, -0.055, -0.1}, {4, -13, 36}}}, {1, {}}};
+    }
     if (weapon_index == knife_index) {
         definition.hip_offset = {0.23, -0.2, 0.55};
         definition.aimed_offset = definition.hip_offset;
@@ -69,6 +82,8 @@ RangeVisualDefinition default_visual(unsigned weapon_index) {
         const auto& spec = weapon_specs()[weapon_index];
         const auto& handling = spec.handling;
         result.fire_modes = weapon_library::FireModeSettings(spec.mode, spec.available_modes);
+        result.projectiles_per_shot = spec.projectiles_per_shot;
+        result.reload_mode = spec.reload_mode;
         result.aim_sway = {handling.aimed_sway_amplitude_rad, handling.aimed_sway_frequency_hz};
     }
     return result;
@@ -134,6 +149,12 @@ RangeVisualDefinition load_visual(const std::filesystem::path& file, unsigned we
                 if (weapon_index >= firearm_count) throw std::invalid_argument("Fire modes are only used by firearms");
                 if (key == "fire_modes") fire_modes = parse_fire_modes(value);
                 else burst_size = whole_number(value, 2, 64);
+            }
+            else if (key == "reload_mode") {
+                if (weapon_index >= firearm_count) throw std::invalid_argument("Reload modes are only used by firearms");
+                if (value == "magazine") result.reload_mode = weapon_library::ReloadMode::Magazine;
+                else if (value == "per_round") result.reload_mode = weapon_library::ReloadMode::PerRound;
+                else throw std::invalid_argument("Reload mode must be magazine or per_round");
             }
             else if (key == "reload_interpolation" || key == "attack_interpolation" || key == "lower_interpolation") {
                 auto& interpolation = key == "reload_interpolation" ? definition.interpolation :

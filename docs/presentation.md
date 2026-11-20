@@ -15,9 +15,10 @@ helper. Edit one of the files in `examples/range/visuals`:
 - `rifle.weapon`
 - `turret.weapon`
 - `knife.weapon`
+- `shotgun.weapon`
 
 Press F5 in the range to load changes during play. Ammo, target hits, simulation time
-and in-progress reload, attack and stance timings are preserved. All four configs and their assets
+and in-progress reload, attack and stance timings are preserved. The configs and their assets
 must load successfully before replacement. Errors appear in the HUD and console;
 failed updates retain the previous working setup. At startup, a configuration error
 leaves the built-in shapes available.
@@ -29,7 +30,8 @@ The build copies bundled files there when building the range. To use your own di
 weapon_library_range --visuals path/to/visuals
 ```
 
-Copy all four configs to that directory. Model and animation paths are relative
+Copy the configs to that directory. A directory with the original four files
+uses the built-in shotgun configuration. Model and animation paths are relative
 to their respective `.weapon` file, independent of the process working directory.
 Paths may contain spaces; do not quote values inside the config. Blank lines and
 whole-line `#` comments are allowed. Unknown keys, duplicate settings (except

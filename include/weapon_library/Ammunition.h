@@ -9,7 +9,7 @@ namespace weapon_library {
 // Game/inventory adapter. take_up_to is one atomic operation: remove and return
 // 0..requested rounds, or return zero without removing anything on failure.
 // Implementations must not throw or re-enter the weapon. No reservation is needed:
-// the weapon calls this only at reload completion and can accept the whole result.
+// the weapon calls this only at a reload transfer boundary and can accept the whole result.
 class AmmunitionSource {
 public:
     virtual ~AmmunitionSource() = default;

@@ -1,4 +1,4 @@
-# Weapon Library v0.16.0
+# Weapon Library v0.17.1
 
 A small C++17 foundation for reusable weapon mechanics. The core has no external
 dependencies, graphics, physics engine, platform calls or wall-clock access.
@@ -14,6 +14,8 @@ dependencies, graphics, physics engine, platform calls or wall-clock access.
 - Read-only state snapshots and headless behavioral tests.
 - A firing mechanism with semi-automatic and automatic trigger modes.
 - Cadence, magazine capacity, configurable ammo cost and dry-fire events.
+- Shared impact data for projectile and melee contacts. [Contact API](docs/hits.md)
+- Optional per-round reloading with individual insertion events. [Reload settings](docs/reloading.md#per-round-reloads)
 - Configurable projectile counts with independent spread directions for each shot.
 - One ordered stream of action transitions and shot events.
 - Independent aiming, seeded spread, shot bloom and accumulating/recovering recoil.
@@ -68,7 +70,7 @@ scripts\build-windows.cmd --run
 
 The launcher builds the demo using CMake directly and opens its window. It does
 not run a PowerShell script or change execution policies. Enter with a click or Enter.
-The scene has three ranged targets, a near melee target, four weapon configurations, hit feedback, short
+The scene has three ranged targets, a near melee target, five weapon configurations, hit feedback, short
 projectile trails, ammo counters, accuracy and scoring. Every shot comes from the
 library's `ShotFiredEvent`; hits are counted when its flying projectile impacts.
 The blue region in front of target 03 contains water. The HUD shows flight time,
@@ -100,6 +102,7 @@ increase the target hit counter. Use V to inspect the drop.
 | Left mouse / F | Attack; hold for rifle/turret, tap for pistol/knife |
 | 1 / 2 / 3 | Select pistol / rifle / turret firing configuration |
 | 4 | Select knife; approach the near target to the left of the starting position |
+| 5 | Select the shotgun with per-round reload |
 | R | Reload from this weapon's reserve |
 | Q | Cancel reload or the current knife swing |
 | C | Toggle the crosshair and spread ring |
@@ -115,8 +118,9 @@ increase the target hit counter. Use V to inspect the drop.
 
 Switching preserves each magazine and releases the old weapon's trigger. Resume,
 switch and reset require a fresh trigger press, preventing accidental firing.
-Focus loss pauses the simulation and releases the mouse. Reload transfers happen
-only on completion; switching cancels reload and preserves loaded/reserve rounds.
+Focus loss pauses the simulation and releases the mouse. A magazine reload
+transfers ammo at completion. A per-round reload transfers each completed
+insertion. Switching cancels the current reload and keeps completed transfers.
 The HUD shows reserve ammo and reload progress. The turret preset
 tests automatic firing with a larger magazine; it uses the same handheld demo view.
 
@@ -125,7 +129,7 @@ Shift to raise a firearm directly to ADS. Each weapon can specify separate
 lowering, ready raise and ADS raise durations. See [lowered pose settings](docs/presentation.md#lowered-pose)
 and [reload interruption](docs/reloading.md#range-integration).
 
-Edit `examples/range/visuals/pistol.weapon`, `rifle.weapon` or `turret.weapon`
+Edit the firearm's `.weapon` file in `examples/range/visuals`
 to replace the model, adjust its transform, align the muzzle and customize reload
 keyframes or a skeletal clip. The rifle includes an original glTF model with an
 animated magazine. The launchers read these source configs; press F5 to apply edits.
@@ -135,6 +139,11 @@ and reusable library API.
 Set `projectiles_per_shot = 8` in a firearm's `.weapon` file and press F5 to
 try a multi-projectile shot. The range spends one round and tracks each
 projectile's hit separately. See [projectile groups](docs/firing.md#projectile-groups).
+
+The shotgun launches eight pellets per shell and loads one shell at a time.
+Select it with 5, fire three times, enable slow motion with V, then press R. Cancel with Q when
+the magazine reaches 5 of 6 to check that the two inserted shells are kept.
+[Reload interruption](docs/reloading.md#range-integration)
 
 The rifle demonstrates semi-automatic, burst and fully automatic fire.
 Press B to cycle its modes. The pistol has semi-automatic fire and the turret

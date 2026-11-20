@@ -114,10 +114,11 @@ void water_and_weapon_speed_affect_flight() {
             "Projectile did not inherit shooter velocity");
 }
 
-void water_results_match_actual_impacts_for_every_weapon() {
+void water_results_match_actual_impacts_for_single_projectile_weapons() {
     for (unsigned index = 0; index < weapon_range::weapon_specs().size(); ++index) {
         weapon_range::RangeSimulation range;
         range.select_weapon(index);
+        if (range.projectiles_per_shot() != 1) continue;
         range.look(std::atan2(3.0, 32.0), 0.0);
         range.set_trigger(true);
         range.set_trigger(false);
@@ -383,6 +384,25 @@ void selectable_fire_modes_and_lowering_interrupt_a_burst() {
             "Rifle did not cycle back to its first mode");
 }
 
+void common_contacts_preserve_impact_geometry_and_simulation_time() {
+    using weapon_library::HitKind;
+    using weapon_library::ballistics::ProjectileEvent;
+    using weapon_library::ballistics::ProjectileEventType;
+    weapon_library::ballistics::ProjectileState projectile;
+    projectile.position = {1, 2, 3};
+    projectile.age_seconds = 0.4;
+    const auto impact = ProjectileEvent{ProjectileEventType::Impact, projectile, 42, {0, 0, 1}}.hit_contact(1.6);
+    const auto melee = weapon_library::MeleeHitEvent{1, 2, 42, 2.0, {1, 2, 3}, {0, 0, 1}, true}.hit_contact();
+    require(impact && impact->kind == HitKind::Projectile && melee.kind == HitKind::Melee &&
+            impact->object_id == melee.object_id && std::abs(impact->time_seconds - melee.time_seconds) < 1e-10 &&
+            weapon_library::math::length(impact->position - melee.position) < 1e-10 &&
+            weapon_library::math::length(impact->normal - melee.normal) < 1e-10,
+            "Projectile and melee contacts did not use the same time and geometry format");
+    require(!ProjectileEvent{ProjectileEventType::Expired, projectile}.hit_contact(1.6) &&
+            !ProjectileEvent{ProjectileEventType::MediumChanged, projectile}.hit_contact(1.6),
+            "A non-impact projectile event became a hit contact");
+}
+
 void approach_melee_target(weapon_range::RangeSimulation& range) {
     range.advance(2.3 / 3.2, 0, -1);
     range.advance(0.28, 1, 0);
@@ -502,7 +522,7 @@ void melee_contacts_follow_aim_and_lie_on_real_surfaces() {
 
 int main() {
     try {
-        water_results_match_actual_impacts_for_every_weapon();
+        water_results_match_actual_impacts_for_single_projectile_weapons();
         wall_results_and_marker_lifetime();
         hits_use_library_shots();
         switch_preserves_magazines_and_releases_trigger();
@@ -516,6 +536,7 @@ int main() {
         sprint_lowers_the_weapon_and_requires_a_fresh_trigger_press();
         lowering_interrupts_queued_and_active_reloads();
         selectable_fire_modes_and_lowering_interrupt_a_burst();
+        common_contacts_preserve_impact_geometry_and_simulation_time();
         melee_reach_phases_hold_and_ammunition();
         melee_cancellation_direction_cover_and_movement();
         melee_contacts_follow_aim_and_lie_on_real_surfaces();

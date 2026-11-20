@@ -13,7 +13,9 @@
 namespace weapon_range {
 
 using Vec3 = weapon_library::ballistics::Vec3;
-constexpr unsigned firearm_count = 3, weapon_count = 4, knife_index = 3;
+constexpr unsigned firearm_count = 4, weapon_count = firearm_count + 1;
+constexpr unsigned shotgun_index = 3, knife_index = firearm_count;
+constexpr std::array<unsigned, weapon_count> weapon_key_order{0, 1, 2, knife_index, shotgun_index};
 Vec3 view_direction(double yaw, double pitch);
 
 struct WaterVolume { Vec3 min{1.7, 0.0, -25.0}, max{4.3, 3.2, -19.0}; };
@@ -67,9 +69,11 @@ struct WeaponSpec {
     unsigned reserve_rounds = 0;
     double reload_seconds = 1.5;
     std::vector<weapon_library::FireMode> available_modes;
+    std::uint32_t projectiles_per_shot = 1;
+    weapon_library::ReloadMode reload_mode = weapon_library::ReloadMode::Magazine;
 };
 
-const std::array<WeaponSpec, 3>& weapon_specs();
+const std::array<WeaponSpec, firearm_count>& weapon_specs();
 
 // Demo game rules only. This module has no raylib or platform dependency.
 class RangeSimulation {
@@ -99,6 +103,7 @@ public:
     void set_lowered_stance_timing(unsigned index, weapon_library::LoweredStanceTiming timing);
     void set_projectiles_per_shot(unsigned index, std::uint32_t count);
     void set_fire_mode_settings(unsigned index, weapon_library::FireModeSettings settings);
+    void set_reload_mode(unsigned index, weapon_library::ReloadMode mode);
     std::uint32_t projectiles_per_shot() const noexcept;
     const weapon_library::WeaponPresentation& presentation() const { return presentation_[selected_]; }
     weapon_library::PresentationPose sway_pose() const;
@@ -138,15 +143,17 @@ private:
                  std::vector<PendingShot>* pending = nullptr);
     void shoot(double time, unsigned weapon_index, std::uint32_t projectile_count);
     void consume_melee(const std::vector<weapon_library::MeleeEvent>& events);
+    bool record_contact(const weapon_library::HitContact& contact, ShotResult result = {});
+    void record_result(const ShotResult& result);
     void advance_melee(double seconds);
     void advance_projectiles(double seconds);
     void move(double seconds);
     void advance_handling(double seconds);
     WeaponPose weapon_pose(unsigned weapon_index) const;
 
-    std::array<std::unique_ptr<weapon_library::FiringMechanism>, 3> weapons_;
+    std::array<std::unique_ptr<weapon_library::FiringMechanism>, firearm_count> weapons_;
     std::array<std::unique_ptr<weapon_library::WeaponHandling>, weapon_count> handling_;
-    std::array<std::shared_ptr<weapon_library::AmmunitionReserve>, 3> reserves_;
+    std::array<std::shared_ptr<weapon_library::AmmunitionReserve>, firearm_count> reserves_;
     std::array<weapon_library::WeaponPresentation, weapon_count> presentation_;
     std::array<weapon_library::AimSwaySettings, weapon_count> aim_sway_;
     std::array<weapon_library::LoweredStanceTiming, weapon_count> stance_timing_;

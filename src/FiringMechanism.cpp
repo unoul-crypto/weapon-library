@@ -47,6 +47,7 @@ FiringMechanism::FiringMechanism(std::shared_ptr<const WeaponDefinition> weapon_
         throw std::invalid_argument("Invalid magazine capacity, shot cost or initial ammo");
     }
     set_projectiles_per_shot(definition_.projectiles_per_shot);
+    set_reload_mode(definition_.reload_mode);
     const auto& actions = weapon_.definition().actions();
     const auto action = std::find_if(actions.begin(), actions.end(), [&](const auto& value) {
         return value.id == definition_.action_id;
@@ -54,15 +55,18 @@ FiringMechanism::FiringMechanism(std::shared_ptr<const WeaponDefinition> weapon_
     if (action == actions.end()) {
         throw std::invalid_argument("Firing action must exist in the weapon definition");
     }
-    if (definition_.reload_action_id) {
+    const auto reload_index = [&](std::optional<ActionId> id) -> std::optional<std::size_t> {
+        if (!id) return std::nullopt;
         const auto reload = std::find_if(actions.begin(), actions.end(), [&](const auto& value) {
-            return value.id == *definition_.reload_action_id;
+            return value.id == *id;
         });
         if (reload == actions.end() || reload->id == definition_.action_id) {
             throw std::invalid_argument("Reload action must exist and differ from the firing action");
         }
-        reload_action_index_ = static_cast<std::size_t>(reload - actions.begin());
-    }
+        return static_cast<std::size_t>(reload - actions.begin());
+    };
+    reload_action_index_ = reload_index(definition_.reload_action_id);
+    round_reload_action_index_ = reload_index(definition_.round_reload_action_id);
 }
 
 const WeaponDefinition& FiringMechanism::weapon_definition() const noexcept {
@@ -100,11 +104,20 @@ void FiringMechanism::interrupt_trigger() noexcept {
     if (trigger_held_) requires_trigger_release_ = true;
 }
 
+void FiringMechanism::set_reload_mode(ReloadMode mode) {
+    if (mode != ReloadMode::Magazine && mode != ReloadMode::PerRound)
+        throw std::invalid_argument("Unknown reload mode");
+    reload_mode_ = mode;
+}
+
 FiringState FiringMechanism::state() const noexcept {
     ReloadState reload;
     const auto weapon = weapon_.state();
+    reload.mode = reload_mode_;
     if (reload_source_) {
-        const auto& action = weapon_.definition().actions()[*reload_action_index_];
+        const auto& action = weapon_.definition().actions()[active_reload_action_index_];
+        reload.mode = active_reload_mode_;
+        reload.rounds_inserted = rounds_inserted_;
         reload.active = true;
         reload.waiting_for_action = !reload_running_;
         reload.duration_seconds = action.windup_seconds + action.active_seconds + action.recovery_seconds;
@@ -224,17 +237,12 @@ void FiringMechanism::append_events(const std::vector<WeaponEvent>& events,
             output.emplace_back(ShotFiredEvent{event.action_id, event.time_seconds,
                                                definition_.rounds_per_shot, rounds_remaining_, projectiles_per_shot_});
         }
-        if (!reload_running_ || event.action_id != *definition_.reload_action_id) continue;
-        if (event.type == EventType::ActionStarted) {
+        if (!reload_running_ || event.action_id != weapon_.definition().actions()[active_reload_action_index_].id) continue;
+        if (event.type == EventType::ActionStarted && !reload_started_) {
+            reload_started_ = true;
             output.emplace_back(ReloadEvent{ReloadEventType::Started, event.time_seconds, 0, rounds_remaining_});
         } else if (event.type == EventType::ActionCompleted) {
-            auto source = std::move(reload_source_);
-            reload_running_ = false;
-            const auto requested = definition_.magazine_capacity - rounds_remaining_;
-            const auto transferred = source->take_up_to(requested);
-            if (transferred > requested) throw std::logic_error("Ammunition source returned more rounds than requested");
-            rounds_remaining_ += transferred;
-            output.emplace_back(ReloadEvent{ReloadEventType::Completed, event.time_seconds, transferred, rounds_remaining_});
+            complete_reload_step(event.time_seconds, output);
         } else if (event.type == EventType::ActionCancelled) {
             reload_source_.reset();
             reload_running_ = false;
@@ -243,14 +251,39 @@ void FiringMechanism::append_events(const std::vector<WeaponEvent>& events,
     }
 }
 
+void FiringMechanism::complete_reload_step(double time_seconds, std::vector<FiringEvent>& events) {
+    reload_running_ = false;
+    const bool per_round = active_reload_mode_ == ReloadMode::PerRound;
+    const auto requested = per_round ? 1u : definition_.magazine_capacity - rounds_remaining_;
+    const auto transferred = reload_source_->take_up_to(requested);
+    if (transferred > requested) {
+        reload_source_.reset();
+        throw std::logic_error("Ammunition source returned more rounds than requested");
+    }
+    rounds_remaining_ += transferred;
+    if (per_round && transferred != 0) {
+        ++rounds_inserted_;
+        events.emplace_back(ReloadEvent{ReloadEventType::RoundInserted, time_seconds, transferred, rounds_remaining_});
+        if (rounds_remaining_ < definition_.magazine_capacity && reload_source_->available_rounds() > 0) return;
+    }
+    reload_source_.reset();
+    events.emplace_back(ReloadEvent{ReloadEventType::Completed, time_seconds, per_round ? 0u : transferred, rounds_remaining_});
+}
+
 ReloadCommandResult FiringMechanism::request_reload(std::shared_ptr<AmmunitionSource> source) {
-    if (!reload_action_index_) return {ReloadStatus::Unsupported, {}};
+    const auto index = reload_mode_ == ReloadMode::PerRound && round_reload_action_index_
+        ? round_reload_action_index_ : reload_action_index_;
+    if (!index) return {ReloadStatus::Unsupported, {}};
     if (reload_source_) return {ReloadStatus::Busy, {}};
     if (!source) return {ReloadStatus::NoSource, {}};
     // A committed windup will spend its round before the queued reload starts.
     if (rounds_remaining_ == definition_.magazine_capacity && weapon_.state().phase != Phase::Windup)
         return {ReloadStatus::MagazineFull, {}};
     if (source->available_rounds() == 0) return {ReloadStatus::NoAmmunition, {}};
+    active_reload_action_index_ = *index;
+    active_reload_mode_ = reload_mode_;
+    reload_started_ = false;
+    rounds_inserted_ = 0;
     reload_source_ = std::move(source);
     burst_shots_remaining_ = 0;
     requires_trigger_release_ = trigger_held_;
@@ -261,11 +294,13 @@ ReloadCommandResult FiringMechanism::request_reload(std::shared_ptr<AmmunitionSo
 }
 
 void FiringMechanism::begin_reload_if_ready(std::vector<FiringEvent>& events) {
-    if (!reload_source_ || reload_running_ || weapon_.state().phase != Phase::Ready) return;
-    reload_running_ = true;
-    const auto result = weapon_.execute(WeaponCommand::start(*definition_.reload_action_id));
-    if (!result.accepted()) throw std::logic_error("Ready weapon could not start its reload action");
-    append_events(result.events, events);
+    while (reload_source_ && !reload_running_ && weapon_.state().phase == Phase::Ready) {
+        reload_running_ = true;
+        const auto action_id = weapon_.definition().actions()[active_reload_action_index_].id;
+        const auto result = weapon_.execute(WeaponCommand::start(action_id));
+        if (!result.accepted()) throw std::logic_error("Ready weapon could not start its reload action");
+        append_events(result.events, events);
+    }
 }
 
 ReloadCommandResult FiringMechanism::cancel_reload() {

@@ -1,0 +1,13 @@
+# Built-in model with one shell consumed per eight-projectile shot.
+model =
+mass_kg = 3.8
+hip_offset = 0.24 -0.24 0.6
+aimed_offset = 0 -0.065 0.52
+muzzle_offset = 0 0.025 0.56
+fire_modes = semi
+projectiles_per_shot = 8
+reload_mode = per_round
+reload_interpolation = smooth
+reload_key = 0    0 0 0               0 0 0
+reload_key = 0.42 0.025 -0.055 -0.1   4 -13 36
+reload_key = 1    0 0 0               0 0 0

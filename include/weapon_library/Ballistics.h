@@ -1,6 +1,7 @@
 #pragma once
 
 #include <weapon_library/Math.h>
+#include <weapon_library/HitContact.h>
 #include <cstdint>
 #include <optional>
 #include <vector>
@@ -76,6 +77,12 @@ struct ProjectileEvent {
     ProjectileState state;
     std::uint64_t object_id = 0;
     Vec3 normal;
+
+    // Only impacts are contacts. The host supplies the launch time in its simulation clock.
+    std::optional<HitContact> hit_contact(double launch_time_seconds) const noexcept {
+        if (type != ProjectileEventType::Impact) return std::nullopt;
+        return HitContact{HitKind::Projectile, object_id, launch_time_seconds + state.age_seconds, state.position, normal};
+    }
 };
 
 // Pure simulation, in metres, seconds and kilograms. The host owns entity IDs,

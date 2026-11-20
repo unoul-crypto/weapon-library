@@ -10,6 +10,7 @@ aimed_sway_frequency_hz = 0.55
 projectiles_per_shot = 1
 fire_modes = auto semi burst
 burst_size = 3
+reload_mode = magazine
 lower_seconds = 0.20
 raise_to_ready_seconds = 0.24
 raise_to_aim_seconds = 0.36

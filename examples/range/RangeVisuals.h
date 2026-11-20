@@ -21,6 +21,7 @@ struct RangeVisualDefinition {
     weapon_library::LoweredStanceTiming stance_timing;
     std::uint32_t projectiles_per_shot = 1;
     weapon_library::FireModeSettings fire_modes;
+    weapon_library::ReloadMode reload_mode = weapon_library::ReloadMode::Magazine;
     std::filesystem::path model_file;
     ModelTransform model_transform;
     std::filesystem::path animation_file;
@@ -29,6 +30,7 @@ struct RangeVisualDefinition {
 };
 
 RangeVisualDefinition default_visual(unsigned weapon_index);
+const char* visual_filename(unsigned weapon_index);
 RangeVisualDefinition load_visual(const std::filesystem::path& file, unsigned weapon_index);
 
 } // namespace weapon_range

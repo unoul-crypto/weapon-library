@@ -155,9 +155,9 @@ int main(int argc, char** argv) {
             }
         } else {
             bool changed = false;
-            for (int index = 0; index < static_cast<int>(weapon_range::weapon_count); ++index) {
-                if (pressed.contains(KEY_ONE + index)) {
-                    range.select_weapon(static_cast<unsigned>(index));
+            for (int key = 0; key < static_cast<int>(weapon_range::weapon_key_order.size()); ++key) {
+                if (pressed.contains(KEY_ONE + key)) {
+                    range.select_weapon(weapon_range::weapon_key_order[static_cast<unsigned>(key)]);
                     changed = true;
                 }
             }

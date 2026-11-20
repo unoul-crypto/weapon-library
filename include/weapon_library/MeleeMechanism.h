@@ -2,6 +2,7 @@
 
 #include "Math.h"
 #include "Weapon.h"
+#include "HitContact.h"
 
 #include <unordered_set>
 #include <variant>
@@ -51,6 +52,10 @@ struct MeleeHitEvent {
     double time_seconds;
     math::Vec3 position, normal;
     bool blocking;
+
+    HitContact hit_contact() const noexcept {
+        return {HitKind::Melee, target_id, time_seconds, position, normal};
+    }
 };
 using MeleeEvent = std::variant<WeaponEvent, MeleeHitEvent>;
 enum class MeleeCommand { Attack, Cancel };

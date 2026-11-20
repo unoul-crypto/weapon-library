@@ -216,12 +216,13 @@ Vec3 view_direction(double yaw, double pitch) {
     return {std::sin(yaw) * std::cos(pitch), std::sin(pitch), -std::cos(yaw) * std::cos(pitch)};
 }
 
-const std::array<WeaponSpec, 3>& weapon_specs() {
+const std::array<WeaponSpec, firearm_count>& weapon_specs() {
     static const auto specs = [] {
-        std::array<WeaponSpec, 3> values{{
+        std::array<WeaponSpec, firearm_count> values{{
         {"PISTOL", weapon_library::FireMode::SemiAutomatic, 0.2, 12, 320.0, 0.008, 0.000064},
         {"RIFLE", weapon_library::FireMode::Automatic, 0.1, 30, 820.0, 0.004, 0.000025},
-        {"TURRET", weapon_library::FireMode::Automatic, 0.15, 60, 650.0, 0.04, 0.00008}
+        {"TURRET", weapon_library::FireMode::Automatic, 0.15, 60, 650.0, 0.04, 0.00008},
+        {"SHOTGUN", weapon_library::FireMode::SemiAutomatic, 0.45, 6, 300.0, 0.001, 0.00002}
         }};
         values[0].handling.recoil_per_shot.pitch_rad = 0.012;
         values[0].handling.bloom_per_shot_rad = 0.004;
@@ -247,6 +248,15 @@ const std::array<WeaponSpec, 3>& weapon_specs() {
         values[2].handling.aimed_sway_amplitude_rad = {0.0018, 0.0012};
         values[2].reserve_rounds = 180;
         values[2].reload_seconds = 2.4;
+        auto& shotgun = values[shotgun_index];
+        shotgun.projectiles_per_shot = 8;
+        shotgun.reload_mode = weapon_library::ReloadMode::PerRound;
+        shotgun.reload_seconds = 2.2;
+        shotgun.reserve_rounds = 30;
+        shotgun.handling.hip_spread_rad = 0.045;
+        shotgun.handling.aimed_spread_rad = 0.025;
+        shotgun.handling.recoil_per_shot.pitch_rad = 0.016;
+        shotgun.handling.aimed_sway_amplitude_rad = {0.003, 0.002};
         return values;
     }();
     return specs;
@@ -267,12 +277,14 @@ void RangeSimulation::reset() {
     for (std::size_t i = 0; i < weapons_.size(); ++i) {
         const auto& spec = weapon_specs()[i];
         const auto actions = std::make_shared<const WeaponDefinition>(std::vector<ActionDefinition>{
-            {1, 0.0, 0.0, 0.045}, {2, spec.reload_seconds, 0.0, 0.0, {true, true, true}}});
-        const auto projectile_count = weapons_[i] ? weapons_[i]->projectiles_per_shot() : 1u;
+            {1, 0.0, 0.0, 0.045}, {2, spec.reload_seconds, 0.0, 0.0, {true, true, true}},
+            {3, 0.45, 0.0, 0.0, {true, true, true}}});
+        const auto projectile_count = weapons_[i] ? weapons_[i]->projectiles_per_shot() : spec.projectiles_per_shot;
         const auto modes = weapons_[i] ? weapons_[i]->fire_mode_settings() : FireModeSettings(spec.mode, spec.available_modes);
+        const auto reload_mode = weapons_[i] ? weapons_[i]->reload_mode() : spec.reload_mode;
         weapons_[i] = std::make_unique<FiringMechanism>(
             actions, FiringDefinition{1, modes.initial_mode(), spec.interval_seconds, spec.capacity, 1, 2, projectile_count,
-                                      modes.available_modes(), modes.burst_size()}, spec.capacity);
+                                      modes.available_modes(), modes.burst_size(), reload_mode, 3}, spec.capacity);
         handling_[i] = std::make_unique<WeaponHandling>(spec.handling, 0x92d68ca2u + static_cast<std::uint32_t>(i) * 7919u);
         reserves_[i] = std::make_shared<AmmunitionReserve>(spec.reserve_rounds);
     }
@@ -424,6 +436,11 @@ void RangeSimulation::set_projectiles_per_shot(unsigned index, std::uint32_t cou
 void RangeSimulation::set_fire_mode_settings(unsigned index, weapon_library::FireModeSettings settings) {
     if (index >= weapons_.size()) throw std::invalid_argument("Unknown range firearm");
     weapons_[index]->set_fire_mode_settings(std::move(settings));
+}
+
+void RangeSimulation::set_reload_mode(unsigned index, weapon_library::ReloadMode mode) {
+    if (index >= weapons_.size()) throw std::invalid_argument("Unknown range firearm");
+    weapons_[index]->set_reload_mode(mode);
 }
 
 bool RangeSimulation::cycle_fire_mode() {
@@ -596,27 +613,41 @@ void RangeSimulation::consume_melee(const std::vector<weapon_library::MeleeEvent
         if (const auto* action = std::get_if<weapon_library::WeaponEvent>(&event)) {
             if (action->type == weapon_library::EventType::ActionStarted) ++attacks_;
         } else if (const auto* hit = std::get_if<weapon_library::MeleeHitEvent>(&event)) {
-            ShotResult result;
-            result.position = hit->position;
-            result.normal = hit->normal;
-            result.time_seconds = hit->time_seconds;
-            result.melee = true;
-            if (hit->target_id >= 1 && hit->target_id <= targets_.size()) {
-                auto& target = targets_[static_cast<std::size_t>(hit->target_id - 1)];
-                ++target.hits;
-                ++melee_hits_;
-                target.last_hit_time = hit->time_seconds;
-                last_hit_time_ = std::max(last_hit_time_, hit->time_seconds);
-                score_ += 5;
-                result.outcome = ShotOutcome::Target;
-            } else if (hit->target_id == 300) result.outcome = ShotOutcome::Cover;
-            else if (hit->normal.y > 0.5) result.outcome = ShotOutcome::Floor;
-            else if (hit->normal.y < -0.5) result.outcome = ShotOutcome::Ceiling;
-            else result.outcome = ShotOutcome::Wall;
-            if (result.time_seconds >= last_result_.time_seconds) last_result_ = result;
-            recent_results_.push_back(result);
+            record_contact(hit->hit_contact());
         }
     }
+}
+
+bool RangeSimulation::record_contact(const weapon_library::HitContact& contact, ShotResult result) {
+    result.position = contact.position;
+    result.normal = contact.normal;
+    result.time_seconds = contact.time_seconds;
+    result.melee = contact.kind == weapon_library::HitKind::Melee;
+    if (contact.object_id >= 1 && contact.object_id <= targets_.size()) {
+        auto& target = targets_[static_cast<std::size_t>(contact.object_id - 1)];
+        ++target.hits;
+        target.last_hit_time = std::max(target.last_hit_time, contact.time_seconds);
+        last_hit_time_ = std::max(last_hit_time_, contact.time_seconds);
+        if (result.melee) {
+            ++melee_hits_;
+            score_ += 5;
+        } else {
+            const double radius = std::hypot(contact.position.x - target.center.x, contact.position.y - target.center.y);
+            ++hits_;
+            score_ += radius < 0.18 ? 10 : radius < 0.45 ? 5 : 1;
+        }
+        result.outcome = ShotOutcome::Target;
+    } else if (contact.object_id == 300) result.outcome = ShotOutcome::Cover;
+    else if (contact.normal.y > 0.5) result.outcome = ShotOutcome::Floor;
+    else if (contact.normal.y < -0.5) result.outcome = ShotOutcome::Ceiling;
+    else result.outcome = ShotOutcome::Wall;
+    record_result(result);
+    return result.outcome == ShotOutcome::Target;
+}
+
+void RangeSimulation::record_result(const ShotResult& result) {
+    if (result.time_seconds >= last_result_.time_seconds) last_result_ = result;
+    recent_results_.push_back(result);
 }
 
 void RangeSimulation::consume(const std::vector<weapon_library::FiringEvent>& events,
@@ -687,30 +718,17 @@ void RangeSimulation::advance_projectiles(double seconds) {
             }
             if (event.type == ProjectileEventType::MediumChanged) continue;
             ShotResult result;
-            result.position = event.state.position;
-            result.normal = event.normal;
-            result.time_seconds = projectile.launched_at + event.state.age_seconds;
             result.flight_seconds = event.state.age_seconds;
             result.speed_m_s = length(event.state.velocity);
             result.passed_water = projectile.passed_water;
-            if (event.type == ProjectileEventType::Expired) result.outcome = ShotOutcome::Expired;
-            else if (event.object_id >= 1 && event.object_id <= targets_.size()) {
-                auto& target = targets_[static_cast<std::size_t>(event.object_id - 1)];
-                const double radius = std::hypot(event.state.position.x - target.center.x,
-                                                  event.state.position.y - target.center.y);
-                ++target.hits;
-                ++hits_;
-                target.last_hit_time = std::max(target.last_hit_time, result.time_seconds);
-                last_hit_time_ = std::max(last_hit_time_, result.time_seconds);
-                score_ += radius < 0.18 ? 10 : radius < 0.45 ? 5 : 1;
-                hit_target = true;
-                result.outcome = ShotOutcome::Target;
-            } else if (event.object_id == 300) result.outcome = ShotOutcome::Cover;
-            else if (event.normal.y > 0.5) result.outcome = ShotOutcome::Floor;
-            else if (event.normal.y < -0.5) result.outcome = ShotOutcome::Ceiling;
-            else result.outcome = ShotOutcome::Wall;
-            if (result.time_seconds >= last_result_.time_seconds) last_result_ = result;
-            recent_results_.push_back(result);
+            if (const auto contact = event.hit_contact(projectile.launched_at)) {
+                hit_target = record_contact(*contact, result);
+            } else {
+                result.outcome = ShotOutcome::Expired;
+                result.position = event.state.position;
+                result.time_seconds = projectile.launched_at + event.state.age_seconds;
+                record_result(result);
+            }
         }
         traces_.push_back({before.position, after.position, projectile.launched_at + after.age_seconds,
                            hit_target, travelled_in_water});

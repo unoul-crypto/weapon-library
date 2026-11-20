@@ -53,6 +53,76 @@ void top_up_commits_only_at_completion() {
             "Reload completion repeated the transfer");
 }
 
+void per_round_reload_can_be_interrupted_between_insertions() {
+    auto weapon = gun(3, {1}, {2, 0.5, 0.0, 0.0, {true, true, true}});
+    weapon.set_reload_mode(ReloadMode::PerRound);
+    auto reserve = std::make_shared<AmmunitionReserve>(10);
+    const auto started = collect<ReloadEvent>(weapon.request_reload(reserve).events);
+    require(started.size() == 1 && started.front().type == ReloadEventType::Started, "Per-round reload did not start once");
+    const auto inserts = collect<ReloadEvent>(weapon.advance(1.25));
+    require(inserts.size() == 2 && inserts[0].type == ReloadEventType::RoundInserted &&
+            inserts[1].type == ReloadEventType::RoundInserted && near(inserts[0].time_seconds, 0.5) &&
+            near(inserts[1].time_seconds, 1.0) && inserts[0].rounds_transferred == 1 &&
+            inserts[1].rounds_remaining == 5 && reserve->available_rounds() == 8,
+            "Catch-up lost insertions or transferred multiple rounds at once");
+    const auto reload = weapon.state().reload;
+    require(reload.active && reload.mode == ReloadMode::PerRound && reload.rounds_inserted == 2 &&
+            near(reload.duration_seconds, 0.5) && near(reload.remaining_seconds, 0.25),
+            "Per-round state did not expose the current step");
+    weapon.set_reload_mode(ReloadMode::Magazine);
+    require(weapon.state().reload.mode == ReloadMode::PerRound, "Changing config replaced an active reload");
+    const auto cancelled = collect<ReloadEvent>(weapon.cancel_reload().events);
+    require(cancelled.size() == 1 && cancelled.front().type == ReloadEventType::Cancelled &&
+            cancelled.front().rounds_transferred == 0 && cancelled.front().rounds_remaining == 5,
+            "Cancellation discarded loaded rounds or committed the unfinished step");
+    require(weapon.advance(1.0).empty() && reserve->available_rounds() == 8,
+            "Cancelled insertion continued later");
+    require(weapon.request_reload(reserve).accepted(), "Reload could not restart after cancellation");
+    const auto completed = collect<ReloadEvent>(weapon.advance(0.5));
+    require(completed.size() == 1 && completed.front().type == ReloadEventType::Completed &&
+            completed.front().rounds_transferred == 5 && reserve->available_rounds() == 3,
+            "Next reload did not use the newly configured magazine mode");
+}
+
+void per_round_reload_stops_at_capacity_and_source_exhaustion() {
+    auto config = FiringDefinition{1, FireMode::SemiAutomatic, 0.1, 10, 1, 2};
+    config.reload_mode = ReloadMode::PerRound;
+    config.round_reload_action_id = 3;
+    const auto definitions = std::make_shared<const WeaponDefinition>(std::vector<ActionDefinition>{
+        {1}, {2, 1.5}, {3, 0.0, 0.0, 0.0}
+    });
+    for (unsigned available : {2u, 20u}) {
+        FiringMechanism weapon(definitions, config, 7);
+        auto reserve = std::make_shared<AmmunitionReserve>(available);
+        const auto result = weapon.request_reload(reserve);
+        const auto events = collect<ReloadEvent>(result.events);
+        const auto inserted = std::min(available, 3u);
+        require(result.accepted() && events.size() == inserted + 2 &&
+                events.front().type == ReloadEventType::Started &&
+                events.back().type == ReloadEventType::Completed && events.back().rounds_transferred == 0,
+                "Instant per-round reload did not emit one session start and completion");
+        for (unsigned i = 0; i < inserted; ++i) {
+            const auto& event = events[i + 1];
+            require(event.type == ReloadEventType::RoundInserted && event.time_seconds == 0.0 &&
+                    event.rounds_transferred == 1 && event.rounds_remaining == 8 + i,
+                    "Instant per-round reload lost the ordered insertions");
+        }
+        require(!weapon.state().reload.active && weapon.state().rounds_remaining == 7 + inserted &&
+                reserve->available_rounds() == available - inserted && weapon.advance(2.0).empty(),
+                "Per-round reload bypassed the source or magazine capacity");
+    }
+    auto weapon = gun(3, {1}, {2, 0.5});
+    weapon.set_reload_mode(ReloadMode::PerRound);
+    auto shared = std::make_shared<AmmunitionReserve>(2);
+    weapon.request_reload(shared);
+    shared->take_up_to(2);
+    const auto completed = collect<ReloadEvent>(weapon.advance(1.0));
+    require(completed.size() == 1 && completed.front().type == ReloadEventType::Completed &&
+            weapon.state().rounds_remaining == 3, "Exhausted shared source produced a phantom insertion");
+    config.round_reload_action_id = 1;
+    rejects([&] { FiringMechanism invalid(definitions, config); });
+}
+
 void cancellation_never_spends_ammo_and_releases_source() {
     auto weapon = gun(2);
     auto reserve = std::make_shared<AmmunitionReserve>(8);
@@ -244,6 +314,8 @@ int main() {
     const std::pair<const char*, void (*)()> tests[] = {
         {"Completion-only transfer", top_up_commits_only_at_completion},
         {"Cancellation and source lifetime", cancellation_never_spends_ammo_and_releases_source},
+        {"Interruptible per-round reload", per_round_reload_can_be_interrupted_between_insertions},
+        {"Instant per-round capacity and reserve", per_round_reload_stops_at_capacity_and_source_exhaustion},
         {"Committed shot and held trigger", reload_waits_for_committed_shot_and_blocks_held_trigger},
         {"Blocked reload input", pressing_during_reload_is_not_a_queued_shot},
         {"Partial and shared reserves", partial_and_shared_reserves_preserve_every_round},

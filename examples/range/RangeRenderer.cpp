@@ -267,6 +267,17 @@ void draw_held_weapon(const RangeSimulation& range, WeaponAsset& asset) {
         cube({0, 0.135f, 0}, {0.045f, 0.19f, 0.016f}, {171, 195, 204, 255});
         DrawTriangle3D({-0.0225f, 0.23f, -0.008f}, {0.0225f, 0.23f, -0.008f}, {0, 0.29f, 0}, white);
         DrawTriangle3D({-0.0225f, 0.23f, 0.008f}, {0, 0.29f, 0}, {0.0225f, 0.23f, 0.008f}, muted);
+    } else if (range.selected_weapon() == shotgun_index) {
+        constexpr Color metal{67, 79, 86, 255}, dark{33, 42, 50, 255}, stock{134, 92, 55, 255};
+        cube({0, 0.0f, 0.02f}, {0.12f, 0.105f, 0.25f}, metal);
+        cube({0, -0.024f, -0.19f}, {0.10f, 0.115f, 0.20f}, stock);
+        cube({0, -0.038f, -0.286f}, {0.105f, 0.13f, 0.026f}, dark);
+        cube({0, 0.025f, 0.34f}, {0.055f, 0.055f, 0.44f}, dark);
+        cube({0, -0.031f, 0.29f}, {0.058f, 0.05f, 0.31f}, metal);
+        cube({0, -0.035f, 0.23f}, {0.112f, 0.063f, 0.15f}, stock);
+        for (float z : {0.18f, 0.21f, 0.24f, 0.27f})
+            cube({0, -0.04f, z}, {0.113f, 0.057f, 0.006f}, dark);
+        cube({0, 0.057f, 0.51f}, {0.012f, 0.014f, 0.02f}, accent);
     } else {
         cube({0, 0, 0}, {0.11f, 0.1f, pistol ? 0.24f : 0.4f}, {65, 79, 87, 255});
         cube({0, -0.1f, -0.06f}, {0.09f, 0.17f, 0.1f}, {29, 40, 49, 255});
@@ -397,7 +408,10 @@ void draw_hud(const RangeSimulation& range, Camera3D camera, bool playing, bool 
     if (state.reload.active) {
         DrawRectangle(24, bottom - 45, 310, 37, panel);
         const double progress = weapon_library::WeaponPresentation::reload_progress(state.reload);
-        std::snprintf(buffer, sizeof(buffer), "RELOADING %03.0f%% / Q OR SHIFT", progress * 100.0);
+        if (state.reload.mode == weapon_library::ReloadMode::PerRound)
+            std::snprintf(buffer, sizeof(buffer), "INSERTING ROUND %u / Q OR SHIFT", state.reload.rounds_inserted + 1);
+        else
+            std::snprintf(buffer, sizeof(buffer), "RELOADING %03.0f%% / Q OR SHIFT", progress * 100.0);
         text(state.reload.waiting_for_action ? "QUEUED / Q OR SHIFT TO CANCEL" : buffer, 36, bottom - 35, 16, accent);
         DrawRectangle(24, bottom - 11, static_cast<int>(310 * progress), 3, accent);
     } else if (range.time() - range.last_reload_notice_time() < 1.5) {
@@ -413,17 +427,18 @@ void draw_hud(const RangeSimulation& range, Camera3D camera, bool playing, bool 
         }
         if (notice) text(notice, 36, bottom - 30, 18, accent);
     }
-    for (unsigned i = 0; i < weapon_count; ++i) {
-        const int x = width - 482 + static_cast<int>(i) * 114;
+    for (unsigned key = 0; key < weapon_key_order.size(); ++key) {
+        const auto i = weapon_key_order[key];
+        const int x = width - 26 - static_cast<int>(weapon_key_order.size() - key) * 114;
         const bool selected = i == range.selected_weapon();
         DrawRectangle(x, bottom + 89, 106, 56, selected ? Color{71, 62, 46, 245} : panel);
         if (selected) DrawRectangle(x, bottom + 89, 106, 2, accent);
-        std::snprintf(buffer, sizeof(buffer), "%u", i + 1);
+        std::snprintf(buffer, sizeof(buffer), "%u", key + 1);
         text(buffer, x + 10, bottom + 96, 14, muted);
         centered(i == knife_index ? "KNIFE" : weapon_specs()[i].name, x + 53, bottom + 120, 16, selected ? accent : white);
     }
     DrawRectangle(0, height - 34, width, 34, ink);
-    centered("WASD MOVE  SHIFT SPRINT  RMB AIM  LMB/F ATTACK  B MODE  R RELOAD  Q CANCEL  1-4 WEAPON  C CROSSHAIR  V SLOW  F5 CONFIG  HOME RESET  ESC PAUSE", width / 2, height - 23, width < 1200 ? 11 : 13, muted);
+    centered("WASD MOVE  SHIFT SPRINT  RMB AIM  LMB/F ATTACK  B MODE  R RELOAD  Q CANCEL  1-5 WEAPON  C CROSSHAIR  V SLOW  F5 CONFIG  HOME RESET  ESC PAUSE", width / 2, height - 23, width < 1200 ? 11 : 13, muted);
     const int cx = width / 2, cy = height / 2;
     if (show_crosshair && range.attack_allowed()) draw_crosshair(range, camera, handling.spread_half_angle_rad);
     if (!range.is_melee() && !state.reload.active && range.time() - range.last_dry_time() < 0.9)
@@ -436,7 +451,7 @@ void draw_hud(const RangeSimulation& range, Camera3D camera, bool playing, bool 
         centered("Aim, control recoil and watch the trajectory.", cx, cy - 54, 18, muted);
         centered("Click or press ENTER to enter", cx, cy + 1, 24, accent);
         centered("Hold RMB to aim. Fire with LMB or F.", cx, cy + 53, 17, white);
-        centered("4 selects the knife. Approach the near target.", cx, cy + 83, 16, muted);
+        centered("5 selects the shotgun with per-round reload.", cx, cy + 83, 16, muted);
         centered("R reloads. Q cancels. Home resets the session.", cx, cy + 108, 15, muted);
     }
 }
@@ -446,10 +461,16 @@ void draw_hud(const RangeSimulation& range, Camera3D camera, bool playing, bool 
 struct RangeRenderer::Impl {
     std::array<std::unique_ptr<WeaponAsset>, weapon_count> assets;
     explicit Impl(const std::filesystem::path* directory = nullptr) {
-        const char* files[] = {"pistol.weapon", "rifle.weapon", "turret.weapon", "knife.weapon"};
         for (unsigned i = 0; i < assets.size(); ++i) {
             assets[i] = std::make_unique<WeaponAsset>();
-            assets[i]->definition = directory ? load_visual(*directory / files[i], i) : default_visual(i);
+            if (directory) {
+                const auto file = *directory / visual_filename(i);
+                // Older external config directories use the built-in shotgun preset.
+                assets[i]->definition = i == shotgun_index && !std::filesystem::exists(file) ?
+                    default_visual(i) : load_visual(file, i);
+            } else {
+                assets[i]->definition = default_visual(i);
+            }
             assets[i]->load();
         }
     }
@@ -470,6 +491,7 @@ bool RangeRenderer::reload_visuals(RangeSimulation& range) {
             if (i < firearm_count) {
                 range.set_projectiles_per_shot(i, config.projectiles_per_shot);
                 range.set_fire_mode_settings(i, config.fire_modes);
+                range.set_reload_mode(i, config.reload_mode);
             }
         }
         impl_ = std::move(replacement);

@@ -9,6 +9,7 @@
 namespace weapon_library {
 
 enum class FireMode { SemiAutomatic, Automatic, Burst };
+enum class ReloadMode { Magazine, PerRound };
 
 class FireModeSettings {
 public:
@@ -36,6 +37,8 @@ struct FiringDefinition {
     std::uint32_t projectiles_per_shot = 1; // Independent of magazine cost.
     std::vector<FireMode> available_modes; // Empty means only mode is available.
     std::uint32_t burst_size = 3;
+    ReloadMode reload_mode = ReloadMode::Magazine;
+    std::optional<ActionId> round_reload_action_id; // PerRound uses reload_action_id when omitted.
 };
 
 enum class TriggerCommand { Press, Release };
@@ -53,7 +56,7 @@ struct DryFireEvent {
     double time_seconds;
 };
 
-enum class ReloadEventType { Started, Completed, Cancelled };
+enum class ReloadEventType { Started, Completed, Cancelled, RoundInserted };
 
 struct ReloadEvent {
     ReloadEventType type;
@@ -70,8 +73,10 @@ enum class ReloadStatus {
 struct ReloadState {
     bool active = false; // Includes a request waiting for the current shot to finish.
     bool waiting_for_action = false;
-    double duration_seconds = 0.0;
+    double duration_seconds = 0.0; // In PerRound mode, both times refer to the current insertion.
     double remaining_seconds = 0.0;
+    ReloadMode mode = ReloadMode::Magazine;
+    std::uint32_t rounds_inserted = 0;
 };
 
 // One ordered stream: activation precedes its shot, which precedes recovery.
@@ -120,6 +125,9 @@ public:
     void set_fire_mode_settings(FireModeSettings settings) noexcept;
     // Stops unstarted shots and requires release if the trigger is still held.
     void interrupt_trigger() noexcept;
+    ReloadMode reload_mode() const noexcept { return reload_mode_; }
+    // Configures the next accepted reload request.
+    void set_reload_mode(ReloadMode mode);
 
     // Press/Release are edges. Repeated Press while held is harmless.
     // Semi and burst do not queue presses during cooldown or a running action.
@@ -130,7 +138,7 @@ public:
     // An accepted cancellation releases the trigger; blocked cancellation changes nothing.
     FiringCancelResult cancel_action();
     // May wait for the committed shot/recovery. Source stays owned until completion
-    // or cancellation. No rounds are removed until the reload action completes.
+    // or cancellation. Rounds transfer at completion of the reload action or insertion action.
     ReloadCommandResult request_reload(std::shared_ptr<AmmunitionSource> source);
     ReloadCommandResult cancel_reload();
 
@@ -139,6 +147,7 @@ private:
     void append_events(const std::vector<WeaponEvent>& events,
                        std::vector<FiringEvent>& output);
     void begin_reload_if_ready(std::vector<FiringEvent>& events);
+    void complete_reload_step(double time_seconds, std::vector<FiringEvent>& events);
 
     Weapon weapon_;
     const FiringDefinition definition_;
@@ -155,6 +164,12 @@ private:
     bool reload_running_ = false;
     bool requires_trigger_release_ = false;
     std::optional<std::size_t> reload_action_index_;
+    std::optional<std::size_t> round_reload_action_index_;
+    std::size_t active_reload_action_index_ = 0;
+    ReloadMode reload_mode_ = ReloadMode::Magazine;
+    ReloadMode active_reload_mode_ = ReloadMode::Magazine;
+    bool reload_started_ = false;
+    std::uint32_t rounds_inserted_ = 0;
 };
 
 } // namespace weapon_library

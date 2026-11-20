@@ -93,9 +93,9 @@ trigger press. Holding an empty automatic trigger does not spam events. Dry fire
 does not start an action, spend ammo or start a cooldown. If a magazine has fewer
 rounds than the configured shot cost, the unusable remainder is preserved.
 
-Optional reload actions now top up loaded ammo from an `AmmunitionSource`, with
-transfer only at completion. See [the reload contract](reloading.md). There is no
-mutable loaded-ammo setter or implicit infinite reserve.
+Optional reload actions top up loaded ammo from an `AmmunitionSource`. Magazine
+reloads transfer at completion. Per-round reloads transfer at each completed
+insertion. See [the reload contract](reloading.md).
 
 ## Projectile groups
 
@@ -125,7 +125,7 @@ one of:
 | `WeaponEvent` | Existing action lifecycle transitions |
 | `ShotFiredEvent` | One shot request with action ID, time, projectile count, cost and remaining rounds |
 | `DryFireEvent` | One eligible attempt with insufficient rounds |
-| `ReloadEvent` | Reload start, completion/transfer, or cancellation |
+| `ReloadEvent` | Reload start, round insertion, completion or cancellation |
 
 At activation, `PhaseEntered(Active)` precedes `ShotFiredEvent`. Recovery and
 completion follow. Even completely instant actions preserve this order. Use
