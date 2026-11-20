@@ -38,6 +38,35 @@ camera's zoom and model position remain presentation choices. `recoiled_directio
 returns the center direction including recoil, without spread. It does not change
 state or consume random numbers.
 
+## Lowered stance and sprinting
+
+Use `set_stance(HandlingStance::Lowered)` to lower the weapon. Choose
+`HandlingStance::Ready` to return to hip stance or `HandlingStance::Aimed`
+to raise directly to ADS. Set `HandlingDefinition::lowered_stance` using
+`LoweredStanceTiming{lower_seconds, raise_to_ready_seconds, raise_to_aim_seconds}`.
+All three durations are in simulation seconds. Zero completes that transition
+immediately. `set_aiming` remains a shortcut for selecting Ready or Aimed.
+
+The duration to reach a new destination scales with the remaining fractions
+of the starting pose. Redirecting a transition starts from the current
+`aim_fraction` and `lowered_fraction`. A full raise to ADS uses its configured
+duration for the whole motion. Advance handling to the desired time and pass
+`lowered_fraction` to `WeaponPresentation::sample_lowered` for the visual pose.
+
+The host can check `attack_allowed()` before sending a trigger or attack command.
+It returns false from the lowering command until the weapon finishes raising.
+The range releases the current trigger when lowering and requires a fresh press
+if the player holds it through the transition. Pressing Shift during reload
+requests cancellation before lowering. The weapon starts lowering when the
+reload's cancellation policy allows it. An ongoing melee attack takes priority
+over lowering.
+
+In the range, hold Shift to lower the weapon, with W to sprint. Release Shift
+to raise to ready. Hold RMB while releasing Shift to raise directly to ADS.
+The knife raises to ready. Edit the timings and keyframes in the weapon's
+`.weapon` file and press F5. Updated timings apply to the next transition.
+See [lowered pose settings](presentation.md#lowered-pose).
+
 ## ADS aim sway
 
 Set `HandlingDefinition::aimed_sway_amplitude_rad` to the desired peak yaw and

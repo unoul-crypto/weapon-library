@@ -38,6 +38,9 @@ struct PresentationDefinition {
     PoseInterpolation attack_interpolation = PoseInterpolation::Smooth;
     double mass_kg = 1.0; // Held model inertia.
     SwayStrength sway_strength;
+    std::vector<PoseKeyframe> lower_keyframes{
+        {0.0, {}}, {1.0, {{0.04, -0.12, -0.04}, {26.0, -8.0, 8.0}}}};
+    PoseInterpolation lower_interpolation = PoseInterpolation::Smooth;
 };
 
 // Runtime motion of a held model, in the same local space as PresentationPose.
@@ -65,6 +68,7 @@ public:
     math::Vec3 mount_offset(double aim_fraction) const;
     PresentationPose sample_reload(double progress) const;
     PresentationPose sample_attack(double progress) const;
+    PresentationPose sample_lowered(double lowered_fraction) const;
     PresentationPose reload_pose(const ReloadState& reload) const;
     static double reload_progress(const ReloadState& reload);
 

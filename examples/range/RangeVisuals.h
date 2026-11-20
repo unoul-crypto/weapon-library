@@ -18,6 +18,7 @@ struct ModelTransform {
 struct RangeVisualDefinition {
     weapon_library::WeaponPresentation presentation;
     weapon_library::AimSwaySettings aim_sway;
+    weapon_library::LoweredStanceTiming stance_timing;
     std::filesystem::path model_file;
     ModelTransform model_transform;
     std::filesystem::path animation_file;

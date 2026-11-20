@@ -298,6 +298,67 @@ void reload_preserves_scene_stats_and_ammunition() {
             !range.weapon_state().reload.active && range.shots() == 0, "Reset retained reload state");
 }
 
+void sprint_lowers_the_weapon_and_requires_a_fresh_trigger_press() {
+    weapon_range::RangeSimulation range;
+    range.select_weapon(1);
+    range.set_trigger(true);
+    const auto start_z = range.eye().z;
+    range.set_stance_input(false, true);
+    range.advance(0.2, 1.0);
+    require(range.shots() == 1 && range.handling_state().lowered_fraction == 1.0 &&
+            start_z - range.eye().z > 0.8 && !range.attack_allowed(),
+            "Sprint did not lower the weapon, increase speed or stop continuing fire");
+    require(range.request_reload() == weapon_library::ReloadStatus::Busy, "Reload started with the weapon lowered");
+    range.set_stance_input(true, false);
+    range.advance(0.16);
+    range.set_trigger(true);
+    require(!range.attack_allowed() && range.shots() == 1 && range.handling_state().aim_fraction > 0.0,
+            "Weapon fired before raising to ADS");
+    range.advance(0.16);
+    range.set_trigger(true);
+    require(range.attack_allowed() && range.handling_state().aim_fraction == 1.0 && range.shots() == 1,
+            "Holding fire across the raise fired without a fresh press");
+    range.set_trigger(false);
+    range.set_trigger(true);
+    require(range.shots() == 2, "Fresh trigger press failed after raising");
+}
+
+void lowering_interrupts_queued_and_active_reloads() {
+    for (double reload_elapsed : {0.0, 0.4}) {
+        weapon_range::RangeSimulation range;
+        range.select_weapon(1);
+        range.set_trigger(true);
+        range.set_trigger(false);
+        require(range.request_reload() == weapon_library::ReloadStatus::Accepted, "Test reload did not start");
+        range.advance(reload_elapsed);
+        const auto before = range.weapon_state();
+        const auto reserve = range.reserve_rounds();
+        require(before.reload.active && before.reload.waiting_for_action == (reload_elapsed == 0.0),
+                "Test did not reach the requested reload phase");
+        range.set_trigger(true);
+        range.set_stance_input(false, true);
+        require(!range.weapon_state().reload.active && range.last_reload_cancelled() &&
+                range.handling_state().target_stance == weapon_library::HandlingStance::Lowered,
+                "Lowering did not cancel the reload and update the stance");
+        range.advance(2.0);
+        require(range.weapon_state().rounds_remaining == before.rounds_remaining && range.reserve_rounds() == reserve,
+                "Interrupted reload transferred ammo");
+
+        range.set_stance_input(false, false);
+        range.advance(0.3);
+        range.set_trigger(true);
+        require(range.shots() == 1, "Trigger held through the interrupted reload fired after raising");
+        range.set_trigger(false);
+        range.set_trigger(true);
+        range.set_trigger(false);
+        require(range.shots() == 2 &&
+                range.request_reload() == weapon_library::ReloadStatus::Accepted, "Fresh shot or reload was blocked after raising");
+        range.advance(2.0);
+        require(range.weapon_state().rounds_remaining == 30 && range.reserve_rounds() == reserve - 2,
+                "A new reload after interruption failed to transfer ammo once");
+    }
+}
+
 void approach_melee_target(weapon_range::RangeSimulation& range) {
     range.advance(2.3 / 3.2, 0, -1);
     range.advance(0.28, 1, 0);
@@ -428,6 +489,8 @@ int main() {
         cover_blocks_the_muzzle_even_when_the_eye_sees_above_it();
         range_handling_preserves_catch_up_timing_and_ignores_dry_fire();
         reload_preserves_scene_stats_and_ammunition();
+        sprint_lowers_the_weapon_and_requires_a_fresh_trigger_press();
+        lowering_interrupts_queued_and_active_reloads();
         melee_reach_phases_hold_and_ammunition();
         melee_cancellation_direction_cover_and_movement();
         melee_contacts_follow_aim_and_lie_on_real_surfaces();

@@ -81,6 +81,8 @@ public:
     weapon_library::ReloadStatus cancel_reload();
     weapon_library::CommandStatus cancel_attack();
     void set_aiming(bool aiming);
+    void set_stance_input(bool aiming, bool lower);
+    bool attack_allowed() const noexcept { return handling_[selected_]->attack_allowed(); }
     void set_movement(double forward, double strafe);
     void look(double yaw_delta, double pitch_delta);
     void advance(double seconds, double forward = 0.0, double strafe = 0.0);
@@ -91,6 +93,7 @@ public:
     WeaponPose weapon_pose() const;
     void set_presentation(unsigned index, weapon_library::WeaponPresentation presentation);
     void set_aim_sway(unsigned index, weapon_library::AimSwaySettings settings);
+    void set_lowered_stance_timing(unsigned index, weapon_library::LoweredStanceTiming timing);
     const weapon_library::WeaponPresentation& presentation() const { return presentation_[selected_]; }
     weapon_library::PresentationPose sway_pose() const;
     weapon_library::HandlingState handling_state() const;
@@ -104,6 +107,7 @@ public:
     weapon_library::FiringState weapon_state() const;
     unsigned reserve_rounds() const noexcept { return is_melee() ? 0 : reserves_[selected_]->available_rounds(); }
     weapon_library::ReloadStatus last_reload_status() const noexcept { return last_reload_status_; }
+    bool last_reload_cancelled() const noexcept { return last_reload_cancelled_; }
     double last_reload_notice_time() const noexcept { return last_reload_notice_time_; }
     const std::array<Target, 4>& targets() const noexcept { return targets_; }
     const std::vector<ShotTrace>& traces() const noexcept { return traces_; }
@@ -138,6 +142,7 @@ private:
     std::array<std::shared_ptr<weapon_library::AmmunitionReserve>, 3> reserves_;
     std::array<weapon_library::WeaponPresentation, weapon_count> presentation_;
     std::array<weapon_library::AimSwaySettings, weapon_count> aim_sway_;
+    std::array<weapon_library::LoweredStanceTiming, weapon_count> stance_timing_;
     weapon_library::WeaponSway sway_;
     std::unique_ptr<weapon_library::MeleeMechanism> melee_;
     std::array<Target, 4> targets_;
@@ -152,9 +157,12 @@ private:
     double last_shot_time_ = -10.0, last_hit_time_ = -10.0, last_dry_time_ = -10.0;
     unsigned water_entries_ = 0;
     bool aiming_ = false;
+    bool lower_requested_ = false;
+    bool attack_needs_release_ = false;
     bool melee_trigger_held_ = false;
     unsigned attacks_ = 0, melee_hits_ = 0;
     weapon_library::ReloadStatus last_reload_status_ = weapon_library::ReloadStatus::Accepted;
+    bool last_reload_cancelled_ = false;
     double last_reload_notice_time_ = -10.0;
 };
 

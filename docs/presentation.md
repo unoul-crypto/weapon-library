@@ -1,7 +1,7 @@
 # Weapon models and animation
 
 The library provides `WeaponPresentation` (in the normal `weapon_library` target):
-validated, immutable mount offsets, reload and attack keyframes with no graphics dependency.
+validated, immutable mount offsets and keyframes for reload, attack and lowering.
 The game owns model files, textures, skeletons and rendering. The range demonstrates
 this boundary through `RangeVisuals` (file parsing) and `RangeRenderer` (raylib assets).
 Another engine can consume the same presentation poses and use its own asset loader.
@@ -16,8 +16,8 @@ helper. Edit one of the files in `examples/range/visuals`:
 - `turret.weapon`
 - `knife.weapon`
 
-Press F5 in the range to load changes, including during a reload. Ammo, target hits,
-reload/attack timing and simulation time are preserved. All four configs and their assets
+Press F5 in the range to load changes during play. Ammo, target hits, simulation time
+and in-progress reload, attack and stance timings are preserved. All four configs and their assets
 must load successfully before replacement. Errors appear in the HUD and console;
 failed updates retain the previous working setup. At startup, a configuration error
 leaves the built-in shapes available.
@@ -33,7 +33,7 @@ Copy all four configs to that directory. Model and animation paths are relative
 to their respective `.weapon` file, independent of the process working directory.
 Paths may contain spaces; do not quote values inside the config. Blank lines and
 whole-line `#` comments are allowed. Unknown keys, duplicate settings (except
-`reload_key` and `attack_key`), invalid numbers and malformed tracks are errors.
+`reload_key`, `attack_key` and `lower_key`), invalid numbers and malformed tracks are errors.
 
 ## Model and muzzle
 
@@ -97,6 +97,27 @@ normalized movement speed, then apply `pose(aim_fraction, sway_strength)` in the
 held model's local frame. Pass the weapon's `PresentationDefinition::sway_strength`
 or use the default argument. Use `set_mass_kg` to adjust mass while retaining
 the current pose.
+
+## Lowered pose
+
+These keys tune lowering and raising for each weapon. Times are in seconds.
+
+```ini
+lower_seconds = 0.20
+raise_to_ready_seconds = 0.24
+raise_to_aim_seconds = 0.36
+lower_interpolation = smooth
+lower_key = 0    0 0 0                0 0 0
+lower_key = 0.5  0.02 -0.04 -0.02    12 -8 5
+lower_key = 1    0.06 -0.11 -0.04    22 -18 12
+```
+
+Each `lower_key` is progress, translation XYZ in metres, and rotation XYZ
+in degrees. Progress runs from the raised pose at `0` to the lowered pose at
+`1`. Include both endpoints and set the first pose to zero for an unmodified
+ready pose. The same track runs in reverse when raising, at the duration of the
+destination stance. Both `smooth` (default) and `linear` are supported. Press
+F5 to reload these settings in the scene.
 
 ## Keyframe animation
 

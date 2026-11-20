@@ -246,6 +246,7 @@ void draw_held_weapon(const RangeSimulation& range, WeaponAsset& asset) {
     rlDisableBackfaceCulling();
     rlMultMatrixf(matrix);
     transform_pose(range.sway_pose());
+    transform_pose(asset.definition.presentation.sample_lowered(range.handling_state().lowered_fraction));
     const auto reload = range.weapon_state().reload;
     transform_pose(asset.definition.presentation.reload_pose(reload));
     if (range.is_melee() && range.melee_state().weapon.phase != weapon_library::Phase::Ready)
@@ -318,7 +319,15 @@ void draw_hud(const RangeSimulation& range, Camera3D camera, bool playing, bool 
     else std::snprintf(accuracy, sizeof(accuracy), "AIM %03.0f%%   SPREAD %.2f DEG", handling.aim_fraction * 100.0,
                       handling.spread_half_angle_rad * degrees);
     text(accuracy, 36, 104, 15, teal);
-    if (range.is_melee()) std::snprintf(accuracy, sizeof(accuracy), "APPROACH THE NEAR TARGET");
+    if (!range.attack_allowed()) {
+        const bool lowering = handling.target_stance == weapon_library::HandlingStance::Lowered;
+        if (!lowering)
+            std::snprintf(accuracy, sizeof(accuracy), "RAISING  %.2f S", handling.stance_remaining_seconds);
+        else if (handling.stance_remaining_seconds > 0.0)
+            std::snprintf(accuracy, sizeof(accuracy), "LOWERING  %.2f S", handling.stance_remaining_seconds);
+        else
+            std::snprintf(accuracy, sizeof(accuracy), "WEAPON LOWERED");
+    } else if (range.is_melee()) std::snprintf(accuracy, sizeof(accuracy), "APPROACH THE NEAR TARGET");
     else std::snprintf(accuracy, sizeof(accuracy), "RECOIL %.2f / %.2f DEG", handling.recoil.yaw_rad * degrees,
                       handling.recoil.pitch_rad * degrees);
     text(accuracy, 36, 134, 15, muted);
@@ -379,12 +388,15 @@ void draw_hud(const RangeSimulation& range, Camera3D camera, bool playing, bool 
     if (state.reload.active) {
         DrawRectangle(24, bottom - 45, 310, 37, panel);
         const double progress = weapon_library::WeaponPresentation::reload_progress(state.reload);
-        std::snprintf(buffer, sizeof(buffer), "RELOADING  %03.0f%%  /  Q CANCEL", progress * 100.0);
-        text(state.reload.waiting_for_action ? "FINISHING SHOT..." : buffer, 36, bottom - 35, 16, accent);
+        std::snprintf(buffer, sizeof(buffer), "RELOADING %03.0f%% / Q OR SHIFT", progress * 100.0);
+        text(state.reload.waiting_for_action ? "QUEUED / Q OR SHIFT TO CANCEL" : buffer, 36, bottom - 35, 16, accent);
         DrawRectangle(24, bottom - 11, static_cast<int>(310 * progress), 3, accent);
     } else if (range.time() - range.last_reload_notice_time() < 1.5) {
         const char* notice = nullptr;
         switch (range.last_reload_status()) {
+        case weapon_library::ReloadStatus::Accepted:
+            if (range.last_reload_cancelled()) notice = "RELOAD CANCELLED";
+            break;
         case weapon_library::ReloadStatus::MagazineFull: notice = "MAGAZINE FULL"; break;
         case weapon_library::ReloadStatus::NoAmmunition: notice = "NO RESERVE AMMO"; break;
         case weapon_library::ReloadStatus::CancellationBlocked: notice = "CANNOT CANCEL YET"; break;
@@ -402,9 +414,9 @@ void draw_hud(const RangeSimulation& range, Camera3D camera, bool playing, bool 
         centered(i == knife_index ? "KNIFE" : weapon_specs()[i].name, x + 53, bottom + 120, 16, selected ? accent : white);
     }
     DrawRectangle(0, height - 34, width, 34, ink);
-    centered("WASD MOVE  RMB AIM  LMB/F ATTACK  R RELOAD  Q CANCEL  1-4 WEAPON  C CROSSHAIR  V SLOW  F5 CONFIG  HOME RESET  ESC PAUSE", width / 2, height - 23, width < 1200 ? 11 : 13, muted);
+    centered("WASD MOVE  SHIFT SPRINT  RMB AIM  LMB/F ATTACK  R RELOAD  Q CANCEL  1-4 WEAPON  C CROSSHAIR  V SLOW  F5 CONFIG  HOME RESET  ESC PAUSE", width / 2, height - 23, width < 1200 ? 11 : 13, muted);
     const int cx = width / 2, cy = height / 2;
-    if (show_crosshair) draw_crosshair(range, camera, handling.spread_half_angle_rad);
+    if (show_crosshair && range.attack_allowed()) draw_crosshair(range, camera, handling.spread_half_angle_rad);
     if (!range.is_melee() && !state.reload.active && range.time() - range.last_dry_time() < 0.9)
         centered("EMPTY  /  R TO RELOAD", cx, cy + 48, 18, accent);
     if (!playing) {
@@ -445,6 +457,7 @@ bool RangeRenderer::reload_visuals(RangeSimulation& range) {
             const auto& config = replacement->assets[i]->definition;
             range.set_presentation(i, config.presentation);
             range.set_aim_sway(i, config.aim_sway);
+            range.set_lowered_stance_timing(i, config.stance_timing);
         }
         impl_ = std::move(replacement);
         status_ = "WEAPON CONFIG LOADED / F5 TO REFRESH";

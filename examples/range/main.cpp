@@ -131,7 +131,7 @@ int main(int argc, char** argv) {
     double accumulated = 0.0;
     const auto pause = [&] {
         range.set_trigger(false);
-        range.set_aiming(false);
+        range.set_stance_input(false, false);
         playing = armed = false;
         accumulated = 0.0;
         EnableCursor();
@@ -162,6 +162,8 @@ int main(int argc, char** argv) {
                 }
             }
             if (pressed.contains(KEY_HOME)) { range.reset(); changed = true; }
+            const bool lower = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
+            range.set_stance_input(IsMouseButtonDown(MOUSE_BUTTON_RIGHT), lower);
             if (pressed.contains(KEY_R)) {
                 if (range.request_reload() == weapon_library::ReloadStatus::Accepted) changed = true;
             }
@@ -175,7 +177,6 @@ int main(int argc, char** argv) {
             const auto mouse = GetMouseDelta();
             const double sensitivity = 0.002 * (1.0 - 0.35 * range.handling_state().aim_fraction);
             range.look(mouse.x * sensitivity, -mouse.y * sensitivity);
-            range.set_aiming(IsMouseButtonDown(MOUSE_BUTTON_RIGHT));
             const double forward = (IsKeyDown(KEY_W) ? 1.0 : 0.0) - (IsKeyDown(KEY_S) ? 1.0 : 0.0);
             const double strafe = (IsKeyDown(KEY_D) ? 1.0 : 0.0) - (IsKeyDown(KEY_A) ? 1.0 : 0.0);
             range.set_movement(forward, strafe);

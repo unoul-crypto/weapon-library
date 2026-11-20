@@ -55,6 +55,9 @@ RangeVisualDefinition load_visual(const std::filesystem::path& file, unsigned we
     auto definition = result.presentation.definition();
     auto aim_sway_amplitude = result.aim_sway.amplitude_rad();
     auto aim_sway_frequency = result.aim_sway.frequency_hz();
+    auto lower_seconds = result.stance_timing.lower_seconds();
+    auto raise_ready_seconds = result.stance_timing.raise_to_ready_seconds();
+    auto raise_aim_seconds = result.stance_timing.raise_to_aim_seconds();
     std::ifstream input(file);
     if (!input) throw std::runtime_error("Cannot open visual config: " + file.filename().string());
     std::set<std::string> seen;
@@ -69,7 +72,8 @@ RangeVisualDefinition load_visual(const std::filesystem::path& file, unsigned we
             const auto key = trim(line.substr(0, equal));
             const auto value = trim(line.substr(equal + 1));
             const bool first = seen.insert(key).second;
-            if (!first && key != "reload_key" && key != "attack_key") throw std::invalid_argument("Duplicate setting: " + key);
+            if (!first && key != "reload_key" && key != "attack_key" && key != "lower_key")
+                throw std::invalid_argument("Duplicate setting: " + key);
             if (key == "model") result.model_file = value;
             else if (key == "animation") result.animation_file = value;
             else if (key == "reload_clip") result.reload_clip = value;
@@ -92,14 +96,19 @@ RangeVisualDefinition load_visual(const std::filesystem::path& file, unsigned we
             else if (key == "aimed_sway_amplitude_rad")
                 numbers(value, aim_sway_amplitude.yaw_rad, aim_sway_amplitude.pitch_rad);
             else if (key == "aimed_sway_frequency_hz") numbers(value, aim_sway_frequency);
-            else if (key == "reload_interpolation" || key == "attack_interpolation") {
-                auto& interpolation = key == "reload_interpolation" ? definition.interpolation : definition.attack_interpolation;
+            else if (key == "lower_seconds") numbers(value, lower_seconds);
+            else if (key == "raise_to_ready_seconds") numbers(value, raise_ready_seconds);
+            else if (key == "raise_to_aim_seconds") numbers(value, raise_aim_seconds);
+            else if (key == "reload_interpolation" || key == "attack_interpolation" || key == "lower_interpolation") {
+                auto& interpolation = key == "reload_interpolation" ? definition.interpolation :
+                    key == "attack_interpolation" ? definition.attack_interpolation : definition.lower_interpolation;
                 if (value == "smooth") interpolation = weapon_library::PoseInterpolation::Smooth;
                 else if (value == "linear") interpolation = weapon_library::PoseInterpolation::Linear;
                 else throw std::invalid_argument("Pose interpolation must be smooth or linear");
             }
-            else if (key == "reload_key" || key == "attack_key") {
-                auto& keys = key == "reload_key" ? definition.reload_keyframes : definition.attack_keyframes;
+            else if (key == "reload_key" || key == "attack_key" || key == "lower_key") {
+                auto& keys = key == "reload_key" ? definition.reload_keyframes :
+                    key == "attack_key" ? definition.attack_keyframes : definition.lower_keyframes;
                 if (first) keys.clear();
                 weapon_library::PoseKeyframe keyframe{};
                 auto& p = keyframe.pose;
@@ -121,6 +130,7 @@ RangeVisualDefinition load_visual(const std::filesystem::path& file, unsigned we
         if (has_clip && result.model_file.empty()) throw std::invalid_argument("Animation clip requires a model");
         result.presentation = weapon_library::WeaponPresentation(std::move(definition));
         result.aim_sway = {aim_sway_amplitude, aim_sway_frequency};
+        result.stance_timing = {lower_seconds, raise_ready_seconds, raise_aim_seconds};
         if (!result.model_file.empty()) result.model_file = (file.parent_path() / result.model_file).lexically_normal();
         if (!result.animation_file.empty()) result.animation_file = (file.parent_path() / result.animation_file).lexically_normal();
         else if (has_clip) result.animation_file = result.model_file;

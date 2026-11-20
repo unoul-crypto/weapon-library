@@ -126,6 +126,63 @@ void aimed_sway_moves_the_shot_center_smoothly() {
     require(same(disabled.shot_center_direction(forward), forward), "Zero frequency did not disable aim sway");
 }
 
+void lowered_stance_raises_to_each_destination_on_its_own_schedule() {
+    auto d = no_kick();
+    d.lowered_stance = {0.2, 0.4, 0.8};
+    WeaponHandling handling(d);
+    handling.set_stance(HandlingStance::Lowered);
+    require(!handling.attack_allowed(), "Lowering accepted an attack");
+    handling.advance(0.1);
+    handling.set_stance(HandlingStance::Lowered);
+    require(near(handling.state().lowered_fraction, 0.5), "Repeating a stance command restarted the motion");
+    handling.advance(0.3);
+    require(handling.state().lowered_fraction == 1.0 && handling.state().aim_fraction == 0.0,
+            "Large update did not settle the lowered stance");
+    handling.set_stance(HandlingStance::Ready);
+    handling.advance(0.2);
+    require(near(handling.state().lowered_fraction, 0.5) && !handling.attack_allowed(),
+            "Ready pose used the wrong raise duration");
+    handling.advance(0.2);
+    require(handling.state().lowered_fraction == 0.0 && handling.state().aim_fraction == 0.0 &&
+            handling.attack_allowed(), "Weapon did not become ready at the end of the raise");
+
+    handling.set_stance(HandlingStance::Lowered);
+    handling.advance(0.2);
+    handling.set_stance(HandlingStance::Aimed);
+    for (int i = 0; i < 40; ++i) handling.advance(0.01);
+    require(near(handling.state().lowered_fraction, 0.5) && near(handling.state().aim_fraction, 0.5) &&
+            !handling.attack_allowed(), "Direct raise to ADS did not blend both pose fractions");
+    handling.advance(0.4);
+    require(handling.state().lowered_fraction == 0.0 && handling.state().aim_fraction == 1.0 &&
+            handling.attack_allowed(), "Direct raise added normal ADS time after raising");
+}
+
+void lowering_can_reverse_and_snap_with_zero_duration() {
+    auto d = no_kick();
+    d.lowered_stance = {0.2, 0.4, 0.8};
+    WeaponHandling handling(d);
+    handling.set_aiming(true);
+    handling.advance(0.2);
+    handling.set_stance(HandlingStance::Lowered);
+    handling.advance(0.1);
+    const auto midway = handling.state();
+    handling.set_stance(HandlingStance::Aimed);
+    require(near(handling.state().lowered_fraction, midway.lowered_fraction) &&
+            near(handling.state().aim_fraction, midway.aim_fraction), "Reversing stance snapped to an endpoint");
+    handling.set_lowered_stance_timing({0.0, 0.0, 0.0});
+    require(near(handling.state().stance_remaining_seconds, 0.4), "Editing timing restarted an active transition");
+    handling.advance(0.41);
+    require(handling.state().aim_fraction == 1.0 && handling.attack_allowed(), "Interrupted raise never completed");
+    handling.set_stance(HandlingStance::Lowered);
+    require(handling.state().lowered_fraction == 1.0 && !handling.attack_allowed(), "Zero-time lowering was delayed");
+    handling.set_stance(HandlingStance::Aimed);
+    require(handling.state().aim_fraction == 1.0 && handling.attack_allowed(), "Zero-time raise to ADS was delayed");
+    handling.set_stance(HandlingStance::Lowered);
+    handling.set_stance(HandlingStance::Ready);
+    require(handling.state().aim_fraction == 0.0 && handling.attack_allowed(), "Zero-time raise to ready was delayed");
+    rejects([] { LoweredStanceTiming invalid(-1.0, 0.2, 0.2); });
+}
+
 void bloom_and_recoil_apply_after_the_shot_and_recover() {
     HandlingDefinition d;
     d.hip_spread_rad = d.aimed_spread_rad = 0;
@@ -302,6 +359,8 @@ int main() {
         {"Seeded cone sampling", spread_is_seeded_bounded_and_centered},
         {"Aim and movement accuracy", aimed_and_moving_shots_have_different_accuracy},
         {"ADS aim sway", aimed_sway_moves_the_shot_center_smoothly},
+        {"Lowered stance routes", lowered_stance_raises_to_each_destination_on_its_own_schedule},
+        {"Stance interruption and zero time", lowering_can_reverse_and_snap_with_zero_duration},
         {"Bloom and recoil", bloom_and_recoil_apply_after_the_shot_and_recover},
         {"Frame partition", recovery_and_randomness_are_independent_of_frame_partition},
         {"Shot timestamps", catch_up_shots_use_their_individual_times},

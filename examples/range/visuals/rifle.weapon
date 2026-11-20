@@ -7,6 +7,12 @@ aimed_sway_multiplier = 0.25
 # Aim drift at full ADS. Amplitude is yaw followed by pitch, in radians.
 aimed_sway_amplitude_rad = 0.0035 0.0025
 aimed_sway_frequency_hz = 0.55
+lower_seconds = 0.20
+raise_to_ready_seconds = 0.24
+raise_to_aim_seconds = 0.36
+lower_key = 0  0 0 0              0 0 0
+lower_key = 0.5  0.02 -0.04 -0.02  12 -8 5
+lower_key = 1  0.06 -0.11 -0.04   22 -18 12
 reload_clip = Reload
 model_scale = 1 1 1
 model_offset = 0 0 0

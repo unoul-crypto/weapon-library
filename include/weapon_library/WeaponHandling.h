@@ -24,6 +24,22 @@ private:
     double frequency_hz_ = 0.55;
 };
 
+enum class HandlingStance { Ready, Aimed, Lowered };
+
+class LoweredStanceTiming {
+public:
+    LoweredStanceTiming() = default;
+    LoweredStanceTiming(double lower_seconds, double raise_to_ready_seconds, double raise_to_aim_seconds);
+    double lower_seconds() const noexcept { return lower_seconds_; }
+    double raise_to_ready_seconds() const noexcept { return raise_to_ready_seconds_; }
+    double raise_to_aim_seconds() const noexcept { return raise_to_aim_seconds_; }
+
+private:
+    double lower_seconds_ = 0.18;
+    double raise_to_ready_seconds_ = 0.22;
+    double raise_to_aim_seconds_ = 0.32;
+};
+
 struct HandlingDefinition {
     double aim_in_seconds = 0.2;
     double aim_out_seconds = 0.15;
@@ -41,6 +57,7 @@ struct HandlingDefinition {
     double recoil_return_rate = 6.0; // Exponential decay rate, per second.
     AngularOffset aimed_sway_amplitude_rad; // Peak angular drift at full ADS.
     double aimed_sway_frequency_hz = 0.55; // Yaw cycles per second; zero disables sway.
+    LoweredStanceTiming lowered_stance;
 };
 
 struct HandlingState {
@@ -52,6 +69,9 @@ struct HandlingState {
     AngularOffset recoil;
     double spread_half_angle_rad = 0.0;
     AngularOffset aim_sway;
+    HandlingStance target_stance = HandlingStance::Ready;
+    double lowered_fraction = 0.0;
+    double stance_remaining_seconds = 0.0;
 };
 
 struct SpreadContext {
@@ -83,6 +103,10 @@ public:
     void set_spread_model(SpreadModel model);
     // Re-evaluates sway at the current simulation time. Retains aim, recoil, bloom and RNG state.
     void set_aim_sway(AimSwaySettings settings) noexcept;
+    // Changes affect the next transition; an in-progress transition keeps its timing.
+    void set_lowered_stance_timing(LoweredStanceTiming timing) noexcept;
+    void set_stance(HandlingStance target);
+    bool attack_allowed() const noexcept; // Check before dispatching a fire or melee command.
     void set_aiming(bool aiming) noexcept;
     void set_movement_factor(double factor);
     void advance(double seconds);
@@ -98,10 +122,16 @@ private:
     double spread(const SpreadModel& model) const;
     double random_unit() noexcept;
     void update_aim_sway() noexcept;
+    void begin_stance(HandlingStance target) noexcept;
+    void advance_stance(double seconds) noexcept;
     HandlingDefinition definition_;
     HandlingState state_;
     std::uint32_t random_state_;
     SpreadModel spread_model_;
+    double stance_start_aim_ = 0.0;
+    double stance_start_lowered_ = 0.0;
+    double stance_duration_ = 0.0;
+    double stance_rounding_error_ = 0.0;
 };
 
 } // namespace weapon_library

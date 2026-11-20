@@ -63,10 +63,12 @@ WeaponPresentation::WeaponPresentation(PresentationDefinition definition) : defi
     if (!finite(definition_.hip_offset) || !finite(definition_.aimed_offset) || !finite(definition_.muzzle_offset))
         throw std::invalid_argument("Presentation offsets must be finite");
     if ((definition_.interpolation != PoseInterpolation::Linear && definition_.interpolation != PoseInterpolation::Smooth) ||
-        (definition_.attack_interpolation != PoseInterpolation::Linear && definition_.attack_interpolation != PoseInterpolation::Smooth))
+        (definition_.attack_interpolation != PoseInterpolation::Linear && definition_.attack_interpolation != PoseInterpolation::Smooth) ||
+        (definition_.lower_interpolation != PoseInterpolation::Linear && definition_.lower_interpolation != PoseInterpolation::Smooth))
         throw std::invalid_argument("Unknown presentation interpolation");
     validate_track(definition_.reload_keyframes);
     validate_track(definition_.attack_keyframes);
+    validate_track(definition_.lower_keyframes);
 }
 
 WeaponSway::WeaponSway(double mass_kg) { set_mass_kg(mass_kg); }
@@ -131,6 +133,10 @@ PresentationPose WeaponPresentation::sample_reload(double progress) const {
 
 PresentationPose WeaponPresentation::sample_attack(double progress) const {
     return sample_track(definition_.attack_keyframes, definition_.attack_interpolation, progress);
+}
+
+PresentationPose WeaponPresentation::sample_lowered(double lowered_fraction) const {
+    return sample_track(definition_.lower_keyframes, definition_.lower_interpolation, lowered_fraction);
 }
 
 double WeaponPresentation::reload_progress(const ReloadState& reload) {

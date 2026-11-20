@@ -10,6 +10,7 @@ namespace weapon_range {
 namespace {
 using namespace weapon_library::ballistics;
 constexpr double movement_speed = 3.2;
+constexpr double sprint_speed = 5.4;
 
 bool in_water(Vec3 p) {
     const auto& box = water_volume();
@@ -254,6 +255,7 @@ RangeSimulation::RangeSimulation() {
         auto config = default_visual(i);
         presentation_[i] = std::move(config.presentation);
         aim_sway_[i] = config.aim_sway;
+        stance_timing_[i] = config.stance_timing;
     }
     reset();
 }
@@ -270,7 +272,10 @@ void RangeSimulation::reset() {
         reserves_[i] = std::make_shared<AmmunitionReserve>(spec.reserve_rounds);
     }
     handling_[knife_index] = std::make_unique<WeaponHandling>(HandlingDefinition{});
-    for (unsigned i = 0; i < weapon_count; ++i) handling_[i]->set_aim_sway(aim_sway_[i]);
+    for (unsigned i = 0; i < weapon_count; ++i) {
+        handling_[i]->set_aim_sway(aim_sway_[i]);
+        handling_[i]->set_lowered_stance_timing(stance_timing_[i]);
+    }
     const auto knife_actions = std::make_shared<const WeaponDefinition>(std::vector<ActionDefinition>{
         {3, 0.16, 0.18, 0.28, {true, true, true}}});
     melee_ = std::make_unique<MeleeMechanism>(knife_actions, MeleeDefinition{3, 1.6, 0.08, 0.0});
@@ -287,9 +292,12 @@ void RangeSimulation::reset() {
     last_shot_time_ = last_hit_time_ = last_dry_time_ = -10.0;
     water_entries_ = 0;
     aiming_ = false;
+    lower_requested_ = false;
+    attack_needs_release_ = false;
     melee_trigger_held_ = false;
     attacks_ = melee_hits_ = 0;
     last_reload_status_ = ReloadStatus::Accepted;
+    last_reload_cancelled_ = false;
     last_reload_notice_time_ = -10.0;
 }
 
@@ -304,17 +312,43 @@ void RangeSimulation::select_weapon(unsigned index) {
     handling_[selected_]->set_aiming(false);
     selected_ = index;
     sway_ = weapon_library::WeaponSway(presentation().definition().mass_kg);
-    handling_[selected_]->set_aiming(!is_melee() && aiming_ && !weapon_state().reload.active);
+    set_stance_input(aiming_, lower_requested_);
     last_reload_notice_time_ = -10.0;
 }
 
 void RangeSimulation::set_aiming(bool aiming) {
+    set_stance_input(aiming, lower_requested_);
+}
+
+void RangeSimulation::set_stance_input(bool aiming, bool lower) {
+    using weapon_library::HandlingStance;
+    const bool lower_pressed = lower && !lower_requested_;
     aiming_ = aiming;
-    handling_[selected_]->set_aiming(!is_melee() && aiming && !weapon_state().reload.active);
+    lower_requested_ = lower;
+    auto weapon = weapon_state();
+    if (lower_pressed && weapon.reload.active) {
+        cancel_reload();
+        weapon = weapon_state();
+    }
+    const bool reloading = weapon.reload.active;
+    const bool melee_busy = is_melee() && melee_state().weapon.phase != weapon_library::Phase::Ready;
+    auto target = HandlingStance::Ready;
+    if (lower && !reloading && !melee_busy) {
+        target = HandlingStance::Lowered;
+        const bool held = is_melee() ? melee_trigger_held_ : weapon.trigger_held;
+        if (held) {
+            set_trigger(false);
+            attack_needs_release_ = true;
+        }
+    } else if (!is_melee() && aiming && !reloading) {
+        target = HandlingStance::Aimed;
+    }
+    handling_[selected_]->set_stance(target);
 }
 
 weapon_library::ReloadStatus RangeSimulation::request_reload() {
     if (is_melee()) return weapon_library::ReloadStatus::Unsupported;
+    if (!attack_allowed()) return weapon_library::ReloadStatus::Busy;
     const auto result = weapons_[selected_]->request_reload(reserves_[selected_]);
     consume(result.events, selected_);
     if (result.accepted()) {
@@ -322,6 +356,7 @@ weapon_library::ReloadStatus RangeSimulation::request_reload() {
         handling_[selected_]->set_aiming(false);
     }
     last_reload_status_ = result.status;
+    last_reload_cancelled_ = false;
     last_reload_notice_time_ = time_;
     return result.status;
 }
@@ -330,8 +365,11 @@ weapon_library::ReloadStatus RangeSimulation::cancel_reload() {
     if (is_melee()) return weapon_library::ReloadStatus::Unsupported;
     const auto result = weapons_[selected_]->cancel_reload();
     consume(result.events, selected_);
-    last_reload_status_ = result.status;
-    last_reload_notice_time_ = time_;
+    if (result.status != weapon_library::ReloadStatus::NotReloading) {
+        last_reload_status_ = result.status;
+        last_reload_cancelled_ = result.accepted();
+        last_reload_notice_time_ = time_;
+    }
     return result.status;
 }
 
@@ -365,6 +403,12 @@ void RangeSimulation::set_aim_sway(unsigned index, weapon_library::AimSwaySettin
     handling_[index]->set_aim_sway(settings);
 }
 
+void RangeSimulation::set_lowered_stance_timing(unsigned index, weapon_library::LoweredStanceTiming timing) {
+    if (index >= stance_timing_.size()) throw std::invalid_argument("Unknown range weapon");
+    stance_timing_[index] = timing;
+    handling_[index]->set_lowered_stance_timing(timing);
+}
+
 WeaponPose RangeSimulation::weapon_pose(unsigned weapon_index) const {
     const auto base = view_direction(yaw_, pitch_);
     const auto camera_forward = handling_[weapon_index]->recoiled_direction(base);
@@ -386,12 +430,22 @@ void RangeSimulation::set_movement(double forward, double strafe) {
     forward = std::clamp(forward, -1.0, 1.0);
     strafe = std::clamp(strafe, -1.0, 1.0);
     const double magnitude = std::hypot(forward, strafe);
+    const bool sprinting = forward > 0.0 && handling_state().target_stance == weapon_library::HandlingStance::Lowered;
+    const double speed = sprinting ? sprint_speed : movement_speed;
     movement_velocity_ = (view_direction(yaw_, 0.0) * forward +
-                         Vec3{std::cos(yaw_), 0, std::sin(yaw_)} * strafe) * (movement_speed / std::max(1.0, magnitude));
+                         Vec3{std::cos(yaw_), 0, std::sin(yaw_)} * strafe) * (speed / std::max(1.0, magnitude));
     for (auto& handling : handling_) handling->set_movement_factor(std::min(1.0, magnitude));
 }
 
 void RangeSimulation::set_trigger(bool held) {
+    if (!held) {
+        attack_needs_release_ = false;
+    } else if (!attack_allowed()) {
+        attack_needs_release_ = true;
+        return;
+    } else if (attack_needs_release_) {
+        return;
+    }
     if (is_melee()) {
         const bool pressed = held && !melee_trigger_held_;
         melee_trigger_held_ = held;

@@ -60,7 +60,8 @@ void configs_and_muzzle(const std::filesystem::path& assets) {
             "reload_motion = none\nreload_key = 0 0 0 0 0 0 0\n", "mass_kg = -1\n",
             "walk_sway_multiplier = -1\n", "turn_sway_multiplier = -1\n", "aimed_sway_multiplier = -1\n",
             "aimed_sway_amplitude_rad = 0.02\n", "aimed_sway_amplitude_rad = 0.02 2\n",
-            "aimed_sway_frequency_hz = -0.5\n"}) {
+            "aimed_sway_frequency_hz = -0.5\n", "raise_to_aim_seconds = -0.1\n",
+            "lower_key = 0.5 0 0 0 0 0 0\n"}) {
         bool rejected = false;
         try { weapon_range::load_visual(fixture.write(invalid), 0); }
         catch (const std::runtime_error& error) {
@@ -143,6 +144,28 @@ void aim_sway_config_applies_per_weapon_and_survives_reset() {
     require(std::abs(range.handling_state().aim_sway.yaw_rad - 0.02) < 1e-10,
             "Reset restored the old aim sway preset");
 }
+void lowered_animation_and_timing_load_from_the_weapon_file() {
+    ConfigFixture fixture;
+    const auto config = weapon_range::load_visual(fixture.write(
+        "lower_seconds = 0\nraise_to_ready_seconds = 0.4\nraise_to_aim_seconds = 0.8\n"
+        "lower_interpolation = linear\nlower_key = 0 0 0 0 0 0 0\nlower_key = 1 0 -0.2 0 30 0 0\n"), 0);
+    weapon_range::RangeSimulation range;
+    range.set_presentation(0, config.presentation);
+    range.set_lowered_stance_timing(0, config.stance_timing);
+    range.set_stance_input(false, true);
+    require(range.handling_state().lowered_fraction == 1.0, "Configured instant lowering was ignored");
+    range.set_stance_input(false, false);
+    range.advance(0.2);
+    const auto pose = range.presentation().sample_lowered(range.handling_state().lowered_fraction);
+    require(same(pose.offset, {0, -0.1, 0}) && same(pose.rotation_degrees, {15, 0, 0}),
+            "Configured pose or ready raise duration did not reach halfway");
+    range.reset();
+    range.set_stance_input(false, true);
+    range.set_stance_input(true, false);
+    range.advance(0.4);
+    require(std::abs(range.handling_state().aim_fraction - 0.5) < 1e-10,
+            "Configured aim raise duration was lost after reset");
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -151,6 +174,7 @@ int main(int argc, char** argv) {
         configs_and_muzzle(argv[1]);
         sway_settings_update_existing_motion();
         aim_sway_config_applies_per_weapon_and_survives_reset();
+        lowered_animation_and_timing_load_from_the_weapon_file();
         std::cout << "Visual config and socket tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';

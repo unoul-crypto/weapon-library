@@ -79,8 +79,10 @@ duplicate requests and blocked cancellation.
 
 ## Range integration
 
-R reloads, Q cancels, and switching cancels the old weapon's reload. Home resets
-the session. Initial reserves are pistol 60, rifle 150 and turret 180; reload times
+R reloads and Q cancels. Shift attempts to cancel the reload before lowering
+the weapon. Switching cancels the old weapon's reload. Successful cancellation
+preserves the magazine and reserve counts. Home resets the session.
+Initial reserves are pistol 60, rifle 150 and turret 180. Reload times
 are 1.2, 1.8 and 2.4 simulation seconds. The HUD shows reserve and progress.
 Reload lowers aim and moves the model; those are scene choices. Previously fired
 projectiles keep flying and statistics are retained. Escape/focus loss pauses the

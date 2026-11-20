@@ -46,6 +46,13 @@ AimSwaySettings::AimSwaySettings(AngularOffset amplitude_rad, double frequency_h
         throw std::invalid_argument("Aim sway amplitudes must be finite and in [0, pi/2) radians");
 }
 
+LoweredStanceTiming::LoweredStanceTiming(double lower_seconds, double raise_to_ready_seconds, double raise_to_aim_seconds)
+    : lower_seconds_(lower_seconds), raise_to_ready_seconds_(raise_to_ready_seconds), raise_to_aim_seconds_(raise_to_aim_seconds) {
+    if (!detail::valid_duration(lower_seconds) || !detail::valid_duration(raise_to_ready_seconds) ||
+        !detail::valid_duration(raise_to_aim_seconds))
+        throw std::invalid_argument("Lowered stance durations must be finite and nonnegative");
+}
+
 WeaponHandling::WeaponHandling(HandlingDefinition definition, std::uint32_t seed, SpreadModel spread_model)
     : definition_(definition), random_state_(seed == 0 ? 0x6d2b79f5u : seed) {
     const double nonnegative[] = {definition.aim_in_seconds, definition.aim_out_seconds,
@@ -93,10 +100,67 @@ HandlingState WeaponHandling::state() const {
 }
 
 void WeaponHandling::set_aiming(bool aiming) noexcept {
-    state_.aiming = aiming;
-    if (aiming && definition_.aim_in_seconds == 0.0) state_.aim_fraction = 1.0;
-    if (!aiming && definition_.aim_out_seconds == 0.0) state_.aim_fraction = 0.0;
+    begin_stance(aiming ? HandlingStance::Aimed : HandlingStance::Ready);
+}
+
+void WeaponHandling::set_stance(HandlingStance target) {
+    switch (target) {
+    case HandlingStance::Ready:
+    case HandlingStance::Aimed:
+    case HandlingStance::Lowered:
+        begin_stance(target);
+        return;
+    }
+    throw std::invalid_argument("Unknown handling stance");
+}
+
+void WeaponHandling::set_lowered_stance_timing(LoweredStanceTiming timing) noexcept {
+    definition_.lowered_stance = timing;
+}
+
+bool WeaponHandling::attack_allowed() const noexcept {
+    return state_.target_stance != HandlingStance::Lowered && state_.lowered_fraction == 0.0;
+}
+
+void WeaponHandling::begin_stance(HandlingStance target) noexcept {
+    if (target == state_.target_stance) return;
+    state_.target_stance = target;
+    state_.aiming = target == HandlingStance::Aimed;
+    stance_start_aim_ = state_.aim_fraction;
+    stance_start_lowered_ = state_.lowered_fraction;
+    const double ready = std::max(0.0, (1.0 - stance_start_aim_) - stance_start_lowered_);
+    const auto& timing = definition_.lowered_stance;
+    switch (target) {
+    case HandlingStance::Lowered:
+        stance_duration_ = (1.0 - stance_start_lowered_) * timing.lower_seconds();
+        break;
+    case HandlingStance::Ready:
+        stance_duration_ = stance_start_lowered_ * timing.raise_to_ready_seconds() +
+                           stance_start_aim_ * definition_.aim_out_seconds;
+        break;
+    case HandlingStance::Aimed:
+        stance_duration_ = stance_start_lowered_ * timing.raise_to_aim_seconds() +
+                           ready * definition_.aim_in_seconds;
+        break;
+    }
+    state_.stance_remaining_seconds = stance_duration_;
+    stance_rounding_error_ = 0.0;
+    advance_stance(0.0);
     update_aim_sway();
+}
+
+void WeaponHandling::advance_stance(double seconds) noexcept {
+    detail::consume_duration(state_.stance_remaining_seconds, seconds, stance_rounding_error_, stance_duration_);
+    const double target_aim = state_.target_stance == HandlingStance::Aimed ? 1.0 : 0.0;
+    const double target_lowered = state_.target_stance == HandlingStance::Lowered ? 1.0 : 0.0;
+    if (state_.stance_remaining_seconds == 0.0) {
+        state_.aim_fraction = target_aim;
+        state_.lowered_fraction = target_lowered;
+        return;
+    }
+    const double remaining = state_.stance_remaining_seconds / stance_duration_;
+    state_.aim_fraction = stance_start_aim_ * remaining + target_aim * (1.0 - remaining);
+    state_.lowered_fraction = stance_start_lowered_ * remaining + target_lowered * (1.0 - remaining);
 }
 
 void WeaponHandling::set_aim_sway(AimSwaySettings settings) noexcept {
@@ -114,13 +178,7 @@ void WeaponHandling::advance(double seconds) {
     if (!detail::valid_duration(seconds) || !std::isfinite(state_.time_seconds + seconds)) {
         throw std::invalid_argument("Handling time must be finite, nonnegative and not overflow");
     }
-    if (state_.aiming) {
-        state_.aim_fraction = definition_.aim_in_seconds == 0.0 ? 1.0 :
-            std::min(1.0, state_.aim_fraction + seconds / definition_.aim_in_seconds);
-    } else {
-        state_.aim_fraction = definition_.aim_out_seconds == 0.0 ? 0.0 :
-            std::max(0.0, state_.aim_fraction - seconds / definition_.aim_out_seconds);
-    }
+    advance_stance(seconds);
     state_.bloom_rad = std::max(0.0, state_.bloom_rad - definition_.bloom_recovery_rad_per_second * seconds);
     const double decay = std::exp(-definition_.recoil_return_rate * seconds);
     state_.recoil.yaw_rad *= decay;

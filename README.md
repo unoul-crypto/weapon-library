@@ -1,4 +1,4 @@
-# Weapon Library v0.13.0
+# Weapon Library v0.14.1
 
 A small C++17 foundation for reusable weapon mechanics. The core has no external
 dependencies, graphics, physics engine, platform calls or wall-clock access.
@@ -22,6 +22,7 @@ dependencies, graphics, physics engine, platform calls or wall-clock access.
 - Engine-independent weapon mounts and configurable reload keyframe poses.
 - Weight-based model inertia with separate walk, turn and ADS sway multipliers.
 - Optional ADS aim sway that moves the reticle and the center of the shot cone.
+- Lowered weapon stance with independent raise times and a configurable pose track.
 - Range adapter for custom OBJ/GLB/GLTF models and named skeletal reload clips.
 - A melee mechanism with active-phase sweeps, per-attack entity deduplication,
   blocking contacts and configurable target limits through a game-owned world adapter.
@@ -102,6 +103,8 @@ increase the target hit counter. Use V to inspect the drop.
 | Q | Cancel reload or the current knife swing |
 | C | Toggle the crosshair and spread ring |
 | F5 | Reload weapon settings without resetting the session |
+| Shift | Lower the weapon and interrupt a cancellable reload |
+| Shift+W | Sprint forward with the weapon lowered |
 | Home | Reset the entire practice session: ammo, reserves, pose, targets and statistics |
 | V | Toggle 0.1x slow motion to inspect trajectories and medium transitions |
 | Escape | Pause and release the mouse |
@@ -114,6 +117,11 @@ Focus loss pauses the simulation and releases the mouse. Reload transfers happen
 only on completion; switching cancels reload and preserves loaded/reserve rounds.
 The HUD shows reserve ammo and reload progress. The turret preset
 tests automatic firing with a larger magazine; it uses the same handheld demo view.
+
+Release Shift to raise the weapon to its ready position. Hold RMB while releasing
+Shift to raise a firearm directly to ADS. Each weapon can specify separate
+lowering, ready raise and ADS raise durations. See [lowered pose settings](docs/presentation.md#lowered-pose)
+and [reload interruption](docs/reloading.md#range-integration).
 
 Edit `examples/range/visuals/pistol.weapon`, `rifle.weapon` or `turret.weapon`
 to replace the model, adjust its transform, align the muzzle and customize reload
