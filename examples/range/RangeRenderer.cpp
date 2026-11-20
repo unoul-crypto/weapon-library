@@ -336,9 +336,10 @@ void draw_hud(const RangeSimulation& range, Camera3D camera, bool playing, bool 
     char buffer[128];
     const auto attempts = range.is_melee() ? range.attacks() : range.shots();
     const auto hits = range.is_melee() ? range.melee_hits() : range.hits();
+    const auto accuracy_attempts = range.is_melee() ? range.attacks() : range.projectiles_fired();
     std::snprintf(buffer, sizeof(buffer), "%s  %03u    HITS  %03u", range.is_melee() ? "STABS" : "SHOTS", attempts, hits);
     text(buffer, width - 246, 82, 17, white);
-    std::snprintf(buffer, sizeof(buffer), "ACCURACY  %03.0f%%", attempts ? 100.0 * hits / attempts : 0.0);
+    std::snprintf(buffer, sizeof(buffer), "ACCURACY  %03.0f%%", accuracy_attempts ? 100.0 * hits / accuracy_attempts : 0.0);
     text(buffer, width - 246, 111, 17, muted);
     std::snprintf(buffer, sizeof(buffer), "SCORE  %04u", range.score());
     text(buffer, width - 246, 140, 18, accent);
@@ -384,6 +385,11 @@ void draw_hud(const RangeSimulation& range, Camera3D camera, bool playing, bool 
         text(buffer, 40, bottom + 121, 15, muted);
         std::snprintf(buffer, sizeof(buffer), "RESERVE  %03u", range.reserve_rounds());
         text(buffer, 40, bottom + 98, 16, teal);
+        const auto projectile_count = range.projectiles_per_shot();
+        if (projectile_count > 1) {
+            std::snprintf(buffer, sizeof(buffer), "PROJ / SHOT  %u", projectile_count);
+            text(buffer, 172, bottom + 98, 15, teal);
+        }
     }
     if (state.reload.active) {
         DrawRectangle(24, bottom - 45, 310, 37, panel);
@@ -458,6 +464,7 @@ bool RangeRenderer::reload_visuals(RangeSimulation& range) {
             range.set_presentation(i, config.presentation);
             range.set_aim_sway(i, config.aim_sway);
             range.set_lowered_stance_timing(i, config.stance_timing);
+            if (i < firearm_count) range.set_projectiles_per_shot(i, config.projectiles_per_shot);
         }
         impl_ = std::move(replacement);
         status_ = "WEAPON CONFIG LOADED / F5 TO REFRESH";

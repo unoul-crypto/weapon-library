@@ -35,6 +35,27 @@ Basis shot_basis(math::Vec3 aim, math::Vec3 up_hint, const HandlingState& state)
 }
 
 bool multiplier(double value) { return std::isfinite(value) && value >= 0.0 && value <= 1.0; }
+
+std::uint32_t nonzero_seed(std::uint32_t seed) noexcept {
+    return seed == 0 ? 0x6d2b79f5u : seed;
+}
+
+double random_unit(std::uint32_t& state) noexcept {
+    // Fixed xorshift32 and explicit 24-bit conversion; no STL distribution or frame RNG.
+    state ^= state << 13;
+    state ^= state >> 17;
+    state ^= state << 5;
+    return static_cast<double>(state >> 8) / 16777216.0;
+}
+
+math::Vec3 sample_cone(const Basis& b, double sin_cone_half_angle, std::uint32_t& rng) {
+    const double sin_half_angle = std::sqrt(random_unit(rng)) * sin_cone_half_angle;
+    const double cos_angle = 1.0 - 2.0 * sin_half_angle * sin_half_angle;
+    const double sin_angle = 2.0 * sin_half_angle * std::sqrt(std::max(0.0, 1.0 - sin_half_angle * sin_half_angle));
+    const double azimuth = 2.0 * pi * random_unit(rng);
+    return math::normalized(b.forward * cos_angle +
+        (b.right * std::cos(azimuth) + b.up * std::sin(azimuth)) * sin_angle);
+}
 }
 
 AimSwaySettings::AimSwaySettings(AngularOffset amplitude_rad, double frequency_hz)
@@ -54,7 +75,8 @@ LoweredStanceTiming::LoweredStanceTiming(double lower_seconds, double raise_to_r
 }
 
 WeaponHandling::WeaponHandling(HandlingDefinition definition, std::uint32_t seed, SpreadModel spread_model)
-    : definition_(definition), random_state_(seed == 0 ? 0x6d2b79f5u : seed) {
+    : definition_(definition), random_state_(nonzero_seed(seed)),
+      extra_projectile_random_state_(nonzero_seed(random_state_ ^ 0x9e3779b9u)) {
     const double nonnegative[] = {definition.aim_in_seconds, definition.aim_out_seconds,
         definition.hip_spread_rad, definition.aimed_spread_rad, definition.movement_spread_rad,
         definition.bloom_per_shot_rad, definition.max_bloom_rad, definition.bloom_recovery_rad_per_second,
@@ -203,14 +225,6 @@ void WeaponHandling::update_aim_sway() noexcept {
     };
 }
 
-double WeaponHandling::random_unit() noexcept {
-    // Fixed xorshift32 and explicit 24-bit conversion; no STL distribution or frame RNG.
-    random_state_ ^= random_state_ << 13;
-    random_state_ ^= random_state_ >> 17;
-    random_state_ ^= random_state_ << 5;
-    return static_cast<double>(random_state_ >> 8) / 16777216.0;
-}
-
 math::Vec3 WeaponHandling::recoiled_direction(math::Vec3 aim, math::Vec3 up_hint) const {
     return kicked(basis(aim, up_hint), state_.recoil).forward;
 }
@@ -220,25 +234,35 @@ math::Vec3 WeaponHandling::shot_center_direction(math::Vec3 aim, math::Vec3 up_h
 }
 
 HandledShot WeaponHandling::sample_shot(math::Vec3 aim, math::Vec3 up_hint) {
+    math::Vec3 direction;
+    return sample_directions(aim, up_hint, &direction, 1);
+}
+
+std::vector<math::Vec3> WeaponHandling::sample_shot_group(math::Vec3 aim, std::uint32_t projectile_count, math::Vec3 up_hint) {
+    if (projectile_count == 0) throw std::invalid_argument("Projectile count must be positive");
+    std::vector<math::Vec3> directions(projectile_count);
+    sample_directions(aim, up_hint, directions.data(), projectile_count);
+    return directions;
+}
+
+HandledShot WeaponHandling::sample_directions(math::Vec3 aim, math::Vec3 up_hint, math::Vec3* directions, std::uint32_t count) {
     const auto b = shot_basis(aim, up_hint, state_); // Validate before state/RNG changes.
     const double cone = spread(spread_model_);
     // Uniform solid-angle cone around the current aim, independent of the renderer.
-    const double sin_half_angle = std::sqrt(random_unit()) * std::sin(cone * 0.5);
-    const double cos_angle = 1.0 - 2.0 * sin_half_angle * sin_half_angle;
-    const double sin_angle = 2.0 * sin_half_angle * std::sqrt(std::max(0.0, 1.0 - sin_half_angle * sin_half_angle));
-    const double azimuth = 2.0 * pi * random_unit();
-    const auto direction = math::normalized(b.forward * cos_angle +
-        (b.right * std::cos(azimuth) + b.up * std::sin(azimuth)) * sin_angle);
+    const double sin_cone_half_angle = std::sin(cone * 0.5);
+    directions[0] = sample_cone(b, sin_cone_half_angle, random_state_);
+    // Extra projectiles have their own stream, preserving the first direction and recoil sequence.
+    for (std::uint32_t i = 1; i < count; ++i) directions[i] = sample_cone(b, sin_cone_half_angle, extra_projectile_random_state_);
     const double recoil_scale = 1.0 + (definition_.aimed_recoil_multiplier - 1.0) * state_.aim_fraction;
     const auto before = state_.recoil;
     const double yaw_kick = definition_.recoil_per_shot.yaw_rad +
-        (random_unit() * 2.0 - 1.0) * definition_.recoil_yaw_jitter_rad;
+        (random_unit(random_state_) * 2.0 - 1.0) * definition_.recoil_yaw_jitter_rad;
     state_.recoil.yaw_rad = std::clamp(state_.recoil.yaw_rad + yaw_kick * recoil_scale,
                                      -definition_.max_recoil_rad.yaw_rad, definition_.max_recoil_rad.yaw_rad);
     state_.recoil.pitch_rad = std::clamp(state_.recoil.pitch_rad + definition_.recoil_per_shot.pitch_rad * recoil_scale,
                                        -definition_.max_recoil_rad.pitch_rad, definition_.max_recoil_rad.pitch_rad);
     state_.bloom_rad = std::min(definition_.max_bloom_rad, state_.bloom_rad + definition_.bloom_per_shot_rad);
-    return {direction, state_.time_seconds, cone, before, state_.recoil};
+    return {directions[0], state_.time_seconds, cone, before, state_.recoil};
 }
 
 } // namespace weapon_library

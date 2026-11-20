@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <vector>
 
 namespace weapon_library {
 
@@ -93,7 +94,7 @@ struct HandledShot {
 };
 
 // All angles are radians. Independent of input devices, cameras and ballistics.
-// The host calls sample_shot exactly once per actual ShotFiredEvent, at its time.
+// The host samples once per actual ShotFiredEvent, at its simulation time.
 class WeaponHandling {
 public:
     explicit WeaponHandling(HandlingDefinition definition = {}, std::uint32_t seed = 1, SpreadModel spread_model = {});
@@ -117,16 +118,19 @@ public:
     // The center of the spread cone, including recoil and ADS sway.
     math::Vec3 shot_center_direction(math::Vec3 aim, math::Vec3 up_hint = {0, 1, 0}) const;
     HandledShot sample_shot(math::Vec3 aim, math::Vec3 up_hint = {0, 1, 0});
+    // Samples independent directions around the same pre-shot center and applies one recoil/bloom impulse.
+    std::vector<math::Vec3> sample_shot_group(math::Vec3 aim, std::uint32_t projectile_count, math::Vec3 up_hint = {0, 1, 0});
 
 private:
     double spread(const SpreadModel& model) const;
-    double random_unit() noexcept;
+    HandledShot sample_directions(math::Vec3 aim, math::Vec3 up_hint, math::Vec3* directions, std::uint32_t count);
     void update_aim_sway() noexcept;
     void begin_stance(HandlingStance target) noexcept;
     void advance_stance(double seconds) noexcept;
     HandlingDefinition definition_;
     HandlingState state_;
     std::uint32_t random_state_;
+    std::uint32_t extra_projectile_random_state_;
     SpreadModel spread_model_;
     double stance_start_aim_ = 0.0;
     double stance_start_lowered_ = 0.0;

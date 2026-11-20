@@ -266,8 +266,9 @@ void RangeSimulation::reset() {
         const auto& spec = weapon_specs()[i];
         const auto actions = std::make_shared<const WeaponDefinition>(std::vector<ActionDefinition>{
             {1, 0.0, 0.0, 0.045}, {2, spec.reload_seconds, 0.0, 0.0, {true, true, true}}});
+        const auto projectile_count = weapons_[i] ? weapons_[i]->projectiles_per_shot() : 1u;
         weapons_[i] = std::make_unique<FiringMechanism>(
-            actions, FiringDefinition{1, spec.mode, spec.interval_seconds, spec.capacity, 1, 2}, spec.capacity);
+            actions, FiringDefinition{1, spec.mode, spec.interval_seconds, spec.capacity, 1, 2, projectile_count}, spec.capacity);
         handling_[i] = std::make_unique<WeaponHandling>(spec.handling, 0x92d68ca2u + static_cast<std::uint32_t>(i) * 7919u);
         reserves_[i] = std::make_shared<AmmunitionReserve>(spec.reserve_rounds);
     }
@@ -288,6 +289,7 @@ void RangeSimulation::reset() {
     eye_ = {0.0, 1.65, 5.0};
     yaw_ = pitch_ = time_ = 0.0;
     selected_ = shots_ = hits_ = score_ = 0;
+    projectiles_fired_ = 0;
     sway_ = weapon_library::WeaponSway(presentation().definition().mass_kg);
     last_shot_time_ = last_hit_time_ = last_dry_time_ = -10.0;
     water_entries_ = 0;
@@ -409,6 +411,15 @@ void RangeSimulation::set_lowered_stance_timing(unsigned index, weapon_library::
     handling_[index]->set_lowered_stance_timing(timing);
 }
 
+void RangeSimulation::set_projectiles_per_shot(unsigned index, std::uint32_t count) {
+    if (index >= weapons_.size()) throw std::invalid_argument("Unknown range firearm");
+    weapons_[index]->set_projectiles_per_shot(count);
+}
+
+std::uint32_t RangeSimulation::projectiles_per_shot() const noexcept {
+    return is_melee() ? 0 : weapons_[selected_]->projectiles_per_shot();
+}
+
 WeaponPose RangeSimulation::weapon_pose(unsigned weapon_index) const {
     const auto base = view_direction(yaw_, pitch_);
     const auto camera_forward = handling_[weapon_index]->recoiled_direction(base);
@@ -495,7 +506,7 @@ void RangeSimulation::advance(double seconds, double forward, double strafe) {
             advance_projectiles(at - cursor);
             advance_handling(at - cursor);
             move(at - cursor);
-            shoot(at, shot.weapon_index);
+            shoot(at, shot.weapon_index, shot.projectile_count);
             cursor = at;
         }
         advance_melee(end - cursor);
@@ -584,39 +595,50 @@ void RangeSimulation::consume(const std::vector<weapon_library::FiringEvent>& ev
                               unsigned weapon_index, std::vector<PendingShot>* pending) {
     for (const auto& event : events) {
         if (const auto* shot = std::get_if<weapon_library::ShotFiredEvent>(&event)) {
-            if (pending) pending->push_back({shot->time_seconds, weapon_index});
-            else shoot(shot->time_seconds, weapon_index);
+            if (pending) pending->push_back({shot->time_seconds, weapon_index, shot->projectile_count});
+            else shoot(shot->time_seconds, weapon_index, shot->projectile_count);
         } else if (const auto* dry = std::get_if<weapon_library::DryFireEvent>(&event)) {
             last_dry_time_ = dry->time_seconds;
         }
     }
 }
 
-void RangeSimulation::shoot(double timestamp, unsigned weapon_index) {
+void RangeSimulation::shoot(double timestamp, unsigned weapon_index, std::uint32_t projectile_count) {
     using namespace weapon_library::ballistics;
     ++shots_;
+    projectiles_fired_ += projectile_count;
     last_shot_time_ = timestamp;
     const auto& spec = weapon_specs()[weapon_index];
     // Capture the pre-shot muzzle. Recoil from this shot affects subsequent aim.
     const auto pose = weapon_pose(weapon_index);
-    const auto shot = handling_[weapon_index]->sample_shot(view_direction(yaw_, pitch_));
     const RangeWorld solids(targets_, false);
-    const auto far_point = eye_ + shot.direction * 100.0;
-    const auto sight_hit = solids.trace({eye_, far_point, 0.0, 0.0}, Medium::air());
-    const auto aim_point = sight_hit ? eye_ + (far_point - eye_) * sight_hit->fraction : far_point;
     auto muzzle = pose.muzzle;
     if (const auto blocked = solids.trace({eye_, muzzle, 0.0, 0.0}, Medium::air())) {
         muzzle = eye_ + (muzzle - eye_) * blocked->fraction + blocked->normal * 0.0001;
     }
-    const auto direction = weapon_library::math::normalized(aim_point - muzzle);
     ProjectileDefinition definition;
     definition.mass_kg = spec.mass_kg;
     definition.cross_section_m2 = spec.cross_section_m2;
     Vec3 inherited = movement_velocity_;
     if ((eye_.x <= -5.5 && inherited.x < 0) || (eye_.x >= 5.5 && inherited.x > 0)) inherited.x = 0;
     if ((eye_.z <= 1.5 && inherited.z < 0) || (eye_.z >= 7.0 && inherited.z > 0)) inherited.z = 0;
-    projectiles_.push_back({Projectile(definition, muzzle, direction * spec.muzzle_speed_m_s + inherited,
-                                      in_water(muzzle) ? Medium::water() : Medium::air()), timestamp, in_water(muzzle)});
+    const bool starts_in_water = in_water(muzzle);
+    const auto medium = starts_in_water ? Medium::water() : Medium::air();
+    const auto launch = [&](Vec3 sight_direction) {
+        const auto far_point = eye_ + sight_direction * 100.0;
+        const auto sight_hit = solids.trace({eye_, far_point, 0.0, 0.0}, Medium::air());
+        const auto aim_point = sight_hit ? eye_ + (far_point - eye_) * sight_hit->fraction : far_point;
+        const auto direction = weapon_library::math::normalized(aim_point - muzzle);
+        projectiles_.push_back({Projectile(definition, muzzle, direction * spec.muzzle_speed_m_s + inherited, medium),
+                                timestamp, starts_in_water});
+    };
+    const auto aim = view_direction(yaw_, pitch_);
+    auto& handling = *handling_[weapon_index];
+    if (projectile_count == 1) {
+        launch(handling.sample_shot(aim).direction);
+    } else {
+        for (const auto direction : handling.sample_shot_group(aim, projectile_count)) launch(direction);
+    }
 }
 
 void RangeSimulation::advance_projectiles(double seconds) {

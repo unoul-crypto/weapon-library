@@ -137,7 +137,7 @@ Models are per instance and may share game-owned read-only data as needed.
 Return a **finite half-angle in [0, pi/2)**, in radians. The core validates the
 model at installation and each evaluation. An invalid replacement preserves the
 previous model; invalid shot-time output or a throwing callback fails before RNG,
-recoil or bloom mutations. `state()` and `sample_shot()` can therefore throw for a
+recoil or bloom mutations. `state()` and the shot samplers can therefore throw for a
 failing model. Definition values retain their original validation even when a
 custom model replaces the formula.
 
@@ -145,8 +145,8 @@ Use a pure evaluator: do not advance game state, consume random values, reenter
 the handling instance or retain context references. The same model is evaluated
 by both the HUD snapshot and the physical shot sampler, so queries must have no
 side effects. Time updates do not evaluate it. The direction distribution remains
-the library's seeded uniform solid-angle cone, with the same three RNG values per
-shot. Current-shot sampling uses pre-shot bloom/recoil; their impulses follow it.
+the library's seeded uniform solid-angle cone. Current-shot sampling uses
+pre-shot bloom and recoil. Their impulses follow it.
 
 For replay or catch-up, supply external factors at **each shot's simulation time**
 rather than the end of a rendered frame. Context-based curves can use
@@ -165,17 +165,19 @@ modified by `recoiled_direction`. The function:
 3. Returns its direction, time, cone angle and recoil before/after the shot.
 4. Adds recoil and bloom for subsequent shots.
 
-The shot does not include its own new recoil impulse. Dry fire, rejected actions
-and cancellation before firing must not call the sampler. If a logical shot
-creates multiple pellets, use this result as the cluster's axis and apply a
-separate pellet pattern; repeated sampler calls would add repeated impulses.
+Use `sample_shot_group(base_direction, event.projectile_count, up_hint)` once
+for a shot that launches several projectiles. It returns one unit direction
+per projectile. All directions sample the same pre-shot cone independently.
+The group applies one recoil and bloom impulse after sampling. Call the
+sampler only for actual shots.
 
 The finite, nonzero up hint defines local yaw and pitch. A parallel hint receives
 a stable fallback axis, including for vertical aim. Direction inputs are validated
 before mutation or random sampling.
 
 The constructor accepts a 32-bit seed. A fixed xorshift32 sequence supplies three
-24-bit uniform values per shot; seed zero maps to `0x6d2b79f5`. Aim commands,
+24-bit uniform values per shot for the first projectile and recoil. Additional
+projectiles use a separate seeded sequence. Seed zero maps to `0x6d2b79f5`. Aim commands,
 snapshots, rendering and time updates do not consume random numbers. The same seed,
 shot times and input history reproduce the shot sequence within numerical error.
 Trigonometric functions and floating-point arithmetic are not promised bitwise
@@ -197,8 +199,8 @@ void consume_shots(weapon_library::WeaponHandling& handling,
         if (const auto* shot = std::get_if<weapon_library::ShotFiredEvent>(&event)) {
             const double elapsed = shot->time_seconds - handling.state().time_seconds;
             handling.advance(elapsed); // Host clocks must already be synchronized.
-            const auto result = handling.sample_shot({0, 0, -1});
-            // Game resolves muzzle pose and spawns a projectile using result.direction.
+            const auto directions = handling.sample_shot_group({0, 0, -1}, shot->projectile_count);
+            // Resolve the muzzle pose and spawn a projectile for each direction.
         }
     }
 }

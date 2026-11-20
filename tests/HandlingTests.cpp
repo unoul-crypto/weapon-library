@@ -79,6 +79,27 @@ void spread_is_seeded_bounded_and_centered() {
             "Spread samples do not cover the cone");
 }
 
+void projectile_groups_share_the_pre_shot_cone_and_one_impulse() {
+    constexpr Vec3 aim{0, 0, -1};
+    WeaponHandling single({}, 42), group({}, 42), replay({}, 42);
+    rejects([&] { group.sample_shot_group(aim, 0); });
+    for (int i = 0; i < 3; ++i) {
+        const auto center = group.shot_center_direction(aim);
+        const auto shot = single.sample_shot(aim);
+        const auto directions = group.sample_shot_group(aim, 8);
+        const auto recorded = replay.sample_shot_group(aim, 8);
+        require(directions.size() == 8 && same(directions.front(), shot.direction) &&
+                !same(directions.front(), directions.back()), "Group did not retain its first sample and give pellets independent directions");
+        for (std::size_t pellet = 0; pellet < directions.size(); ++pellet)
+            require(same(directions[pellet], recorded[pellet]) &&
+                    math::dot(directions[pellet], center) >= std::cos(shot.spread_half_angle_rad) - 1e-12,
+                    "Pellet group was non-repeatable or left the pre-shot cone");
+        const auto state = group.state();
+        require(near(state.bloom_rad, single.state().bloom_rad) && near(state.recoil.yaw_rad, shot.recoil_after.yaw_rad) &&
+                near(state.recoil.pitch_rad, shot.recoil_after.pitch_rad), "Group applied more than one recoil or bloom impulse");
+    }
+}
+
 void aimed_and_moving_shots_have_different_accuracy() {
     const auto d = no_kick();
     WeaponHandling hip(d, 71), aimed(d, 71), moving(d, 71);
@@ -357,6 +378,7 @@ int main() {
     const std::pair<const char*, void (*)()> tests[] = {
         {"ADS transitions", aiming_is_smooth_interruptible_and_can_be_instant},
         {"Seeded cone sampling", spread_is_seeded_bounded_and_centered},
+        {"Seeded projectile groups", projectile_groups_share_the_pre_shot_cone_and_one_impulse},
         {"Aim and movement accuracy", aimed_and_moving_shots_have_different_accuracy},
         {"ADS aim sway", aimed_sway_moves_the_shot_center_smoothly},
         {"Lowered stance routes", lowered_stance_raises_to_each_destination_on_its_own_schedule},

@@ -61,7 +61,8 @@ void configs_and_muzzle(const std::filesystem::path& assets) {
             "walk_sway_multiplier = -1\n", "turn_sway_multiplier = -1\n", "aimed_sway_multiplier = -1\n",
             "aimed_sway_amplitude_rad = 0.02\n", "aimed_sway_amplitude_rad = 0.02 2\n",
             "aimed_sway_frequency_hz = -0.5\n", "raise_to_aim_seconds = -0.1\n",
-            "lower_key = 0.5 0 0 0 0 0 0\n"}) {
+            "lower_key = 0.5 0 0 0 0 0 0\n", "projectiles_per_shot = 0\n",
+            "projectiles_per_shot = 3.5\n", "projectiles_per_shot = 65\n"}) {
         bool rejected = false;
         try { weapon_range::load_visual(fixture.write(invalid), 0); }
         catch (const std::runtime_error& error) {
@@ -166,6 +167,32 @@ void lowered_animation_and_timing_load_from_the_weapon_file() {
     require(std::abs(range.handling_state().aim_fraction - 0.5) < 1e-10,
             "Configured aim raise duration was lost after reset");
 }
+void configured_projectile_count_spawns_a_group_and_survives_reset() {
+    ConfigFixture fixture;
+    weapon_range::RangeSimulation range;
+    const auto config = weapon_range::load_visual(fixture.write("projectiles_per_shot = 8\n"), 0);
+
+    range.set_trigger(true);
+    range.set_trigger(false);
+    range.set_projectiles_per_shot(0, config.projectiles_per_shot);
+    require(range.weapon_state().rounds_remaining == 11 && range.projectiles().size() == 1,
+            "Reloading the config changed ammo or an already emitted shot");
+    range.advance(0.2);
+    range.set_trigger(true);
+    require(range.projectiles_per_shot() == 8 && range.projectiles().size() == 8 &&
+            range.shots() == 2 && range.projectiles_fired() == 9 && range.weapon_state().rounds_remaining == 10,
+            "Range did not spawn eight projectiles for the cost of one round");
+    const auto& first = range.projectiles().front();
+    const auto& last = range.projectiles().back();
+    require(first.launched_at == last.launched_at && same(first.motion.state().position, last.motion.state().position) &&
+            !same(first.motion.state().velocity, last.motion.state().velocity),
+            "The group did not share a muzzle and timestamp with independent trajectories");
+    range.select_weapon(1);
+    require(range.projectiles_per_shot() == 1, "Live projectile tuning affected another firearm");
+    range.reset();
+    require(range.projectiles_per_shot() == 8 && range.projectiles_fired() == 0,
+            "Range reset lost the configured group or retained shot statistics");
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -175,6 +202,7 @@ int main(int argc, char** argv) {
         sway_settings_update_existing_motion();
         aim_sway_config_applies_per_weapon_and_survives_reset();
         lowered_animation_and_timing_load_from_the_weapon_file();
+        configured_projectile_count_spawns_a_group_and_survives_reset();
         std::cout << "Visual config and socket tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';

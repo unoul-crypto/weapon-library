@@ -26,6 +26,7 @@ FiringMechanism::FiringMechanism(std::shared_ptr<const WeaponDefinition> weapon_
         rounds_remaining_ > definition_.magazine_capacity) {
         throw std::invalid_argument("Invalid magazine capacity, shot cost or initial ammo");
     }
+    set_projectiles_per_shot(firing_definition.projectiles_per_shot);
     const auto& actions = weapon_.definition().actions();
     const auto action = std::find_if(actions.begin(), actions.end(), [&](const auto& value) {
         return value.id == definition_.action_id;
@@ -49,6 +50,11 @@ const WeaponDefinition& FiringMechanism::weapon_definition() const noexcept {
 }
 
 const FiringDefinition& FiringMechanism::definition() const noexcept { return definition_; }
+
+void FiringMechanism::set_projectiles_per_shot(std::uint32_t count) {
+    if (count == 0) throw std::invalid_argument("Projectile count must be positive");
+    projectiles_per_shot_ = count;
+}
 
 FiringState FiringMechanism::state() const noexcept {
     ReloadState reload;
@@ -162,7 +168,7 @@ void FiringMechanism::append_events(const std::vector<WeaponEvent>& events,
         if (event.action_id == definition_.action_id && event.type == EventType::PhaseEntered && event.phase == Phase::Active) {
             rounds_remaining_ -= definition_.rounds_per_shot;
             output.emplace_back(ShotFiredEvent{event.action_id, event.time_seconds,
-                                               definition_.rounds_per_shot, rounds_remaining_});
+                                               definition_.rounds_per_shot, rounds_remaining_, projectiles_per_shot_});
         }
         if (!reload_running_ || event.action_id != *definition_.reload_action_id) continue;
         if (event.type == EventType::ActionStarted) {

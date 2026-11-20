@@ -99,6 +99,15 @@ RangeVisualDefinition load_visual(const std::filesystem::path& file, unsigned we
             else if (key == "lower_seconds") numbers(value, lower_seconds);
             else if (key == "raise_to_ready_seconds") numbers(value, raise_ready_seconds);
             else if (key == "raise_to_aim_seconds") numbers(value, raise_aim_seconds);
+            else if (key == "projectiles_per_shot") {
+                if (weapon_index >= firearm_count)
+                    throw std::invalid_argument("projectiles_per_shot is only used by firearms");
+                double count = 0.0;
+                numbers(value, count);
+                if (count < 1.0 || count > 64.0 || std::trunc(count) != count)
+                    throw std::invalid_argument("Range projectile count must be an integer from 1 to 64");
+                result.projectiles_per_shot = static_cast<std::uint32_t>(count);
+            }
             else if (key == "reload_interpolation" || key == "attack_interpolation" || key == "lower_interpolation") {
                 auto& interpolation = key == "reload_interpolation" ? definition.interpolation :
                     key == "attack_interpolation" ? definition.attack_interpolation : definition.lower_interpolation;

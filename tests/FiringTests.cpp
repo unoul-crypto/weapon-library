@@ -313,6 +313,26 @@ void positive_tiny_intervals_do_not_collapse() {
     require(second.size() == 1 && second[0].time_seconds > 0.0, "Short positive interval was lost");
 }
 
+void projectile_count_is_independent_of_cadence_and_ammo() {
+    auto definition = firing_definition(FireMode::Automatic, 0.1, 30, 2);
+    definition.projectiles_per_shot = 8;
+    FiringMechanism gun(weapon_definition(), definition, 6);
+    const auto first = collect<ShotFiredEvent>(gun.execute(TriggerCommand::Press));
+    require(first.size() == 1 && first.front().projectile_count == 8 &&
+            first.front().rounds_consumed == 2 && first.front().rounds_remaining == 4,
+            "A group did not emit exactly one shot with independent ammo cost");
+    gun.set_projectiles_per_shot(3);
+    rejects([&] { gun.set_projectiles_per_shot(0); });
+    const auto events = gun.advance(0.3);
+    const auto shots = collect<ShotFiredEvent>(events);
+    require(shots.size() == 2 && shots[0].projectile_count == 3 && shots[1].projectile_count == 3 &&
+            near(shots[0].time_seconds, 0.1) && near(shots[1].time_seconds, 0.2) &&
+            shots[1].rounds_remaining == 0 && collect<DryFireEvent>(events).size() == 1,
+            "Changing the projectile count changed cadence, rejected the valid count, or spent extra ammo");
+    definition.projectiles_per_shot = 0;
+    rejects([&] { FiringMechanism invalid(weapon_definition(), definition); });
+}
+
 } // namespace
 
 int main() {
@@ -325,6 +345,7 @@ int main() {
         {"Cancellation and ammo", cancellation_preserves_ammo_and_cooldown},
         {"Empty magazine", empty_magazine_has_no_phantom_shots_or_spam},
         {"Multi-round shots", multi_round_shots_preserve_remainder},
+        {"Multiple projectiles per shot", projectile_count_is_independent_of_cadence_and_ammo},
         {"Equivalent time partitions", equivalent_time_partitions_preserve_full_event_stream},
         {"Independent instances and idle time", independent_weapons_and_no_idle_backlog},
         {"Invalid definitions", invalid_definitions_are_rejected},

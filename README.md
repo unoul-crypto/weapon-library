@@ -1,4 +1,4 @@
-# Weapon Library v0.14.1
+# Weapon Library v0.15.0
 
 A small C++17 foundation for reusable weapon mechanics. The core has no external
 dependencies, graphics, physics engine, platform calls or wall-clock access.
@@ -14,6 +14,7 @@ dependencies, graphics, physics engine, platform calls or wall-clock access.
 - Read-only state snapshots and headless behavioral tests.
 - A firing mechanism with semi-automatic and automatic trigger modes.
 - Cadence, magazine capacity, configurable ammo cost and dry-fire events.
+- Configurable projectile counts with independent spread directions for each shot.
 - One ordered stream of action transitions and shot events.
 - Independent aiming, seeded spread, shot bloom and accumulating/recovering recoil.
 - Optional per-instance spread models for nonlinear game-owned accuracy factors,
@@ -130,6 +131,10 @@ animated magazine. The launchers read these source configs; press F5 to apply ed
 See [model and animation customization](docs/presentation.md) for the file format
 and reusable library API.
 
+Set `projectiles_per_shot = 8` in a firearm's `.weapon` file and press F5 to
+try a multi-projectile shot. The range spends one round and tracks each
+projectile's hit separately. See [projectile groups](docs/firing.md#projectile-groups).
+
 The knife has a 0.16 s windup, a 0.18 s active thrust, 0.28 s recovery and 1.6 m reach.
 Its directed attack follows the aim line; contact markers lie on real surfaces.
 It consumes no ammo and hits each entity at most once per swing. Holding attack
@@ -225,7 +230,7 @@ for (const auto& event : continued) {
 ```
 
 Consume both command and update events. `ShotFiredEvent` is the authoritative
-request for one shot, with its timestamp, ammo cost and remaining rounds. The
+request for one shot, with its timestamp, projectile count, ammo cost and remaining rounds. The
 wrapped active-phase event is a lifecycle notification, not a second shot request.
 
 See the [firing contract](docs/firing.md) and the

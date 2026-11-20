@@ -17,6 +17,7 @@ struct FiringDefinition {
     std::uint32_t magazine_capacity = 1;
     std::uint32_t rounds_per_shot = 1;
     std::optional<ActionId> reload_action_id; // Must differ from the firing action.
+    std::uint32_t projectiles_per_shot = 1; // Independent of magazine cost.
 };
 
 enum class TriggerCommand { Press, Release };
@@ -26,6 +27,7 @@ struct ShotFiredEvent {
     double time_seconds;
     std::uint32_t rounds_consumed;
     std::uint32_t rounds_remaining;
+    std::uint32_t projectile_count = 1;
 };
 
 struct DryFireEvent {
@@ -89,6 +91,9 @@ public:
     const WeaponDefinition& weapon_definition() const noexcept;
     const FiringDefinition& definition() const noexcept;
     FiringState state() const noexcept;
+    std::uint32_t projectiles_per_shot() const noexcept { return projectiles_per_shot_; }
+    // Updates the next emitted shot. The immutable definition remains the initial preset.
+    void set_projectiles_per_shot(std::uint32_t count);
 
     // Press/Release are edges. Repeated Press while held is harmless.
     // Semi-auto does not queue presses during cooldown or a running action.
@@ -113,6 +118,7 @@ private:
     bool trigger_held_ = false;
     bool dry_fire_reported_ = false;
     std::uint32_t rounds_remaining_;
+    std::uint32_t projectiles_per_shot_ = 1;
     double cooldown_remaining_ = 0.0;
     double cooldown_rounding_error_ = 0.0;
     std::shared_ptr<AmmunitionSource> reload_source_;

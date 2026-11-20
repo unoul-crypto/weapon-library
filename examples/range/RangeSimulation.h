@@ -94,6 +94,8 @@ public:
     void set_presentation(unsigned index, weapon_library::WeaponPresentation presentation);
     void set_aim_sway(unsigned index, weapon_library::AimSwaySettings settings);
     void set_lowered_stance_timing(unsigned index, weapon_library::LoweredStanceTiming timing);
+    void set_projectiles_per_shot(unsigned index, std::uint32_t count);
+    std::uint32_t projectiles_per_shot() const noexcept;
     const weapon_library::WeaponPresentation& presentation() const { return presentation_[selected_]; }
     weapon_library::PresentationPose sway_pose() const;
     weapon_library::HandlingState handling_state() const;
@@ -115,6 +117,7 @@ public:
     const std::vector<ShotResult>& recent_results() const noexcept { return recent_results_; }
     const ShotResult& last_result() const noexcept { return last_result_; }
     unsigned shots() const noexcept { return shots_; }
+    std::uint64_t projectiles_fired() const noexcept { return projectiles_fired_; }
     unsigned hits() const noexcept { return hits_; }
     unsigned score() const noexcept { return score_; }
     double last_shot_time() const noexcept { return last_shot_time_; }
@@ -126,10 +129,10 @@ public:
     unsigned water_entries() const noexcept { return water_entries_; }
 
 private:
-    struct PendingShot { double time; unsigned weapon_index; };
+    struct PendingShot { double time; unsigned weapon_index; std::uint32_t projectile_count; };
     void consume(const std::vector<weapon_library::FiringEvent>& events, unsigned weapon_index,
                  std::vector<PendingShot>* pending = nullptr);
-    void shoot(double time, unsigned weapon_index);
+    void shoot(double time, unsigned weapon_index, std::uint32_t projectile_count);
     void consume_melee(const std::vector<weapon_library::MeleeEvent>& events);
     void advance_melee(double seconds);
     void advance_projectiles(double seconds);
@@ -154,6 +157,7 @@ private:
     Vec3 movement_velocity_;
     double yaw_ = 0.0, pitch_ = 0.0, time_ = 0.0;
     unsigned selected_ = 0, shots_ = 0, hits_ = 0, score_ = 0;
+    std::uint64_t projectiles_fired_ = 0;
     double last_shot_time_ = -10.0, last_hit_time_ = -10.0, last_dry_time_ = -10.0;
     unsigned water_entries_ = 0;
     bool aiming_ = false;

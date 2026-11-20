@@ -23,9 +23,8 @@ exceed capacity. The configured action and mode must be valid. Invalid definitio
 throw `std::invalid_argument`.
 
 Each mechanism has its own trigger state, ammo, clock, action state and cooldown.
-Weapon definitions can be shared. `state()` returns a value snapshot; editing it
-does not edit the runtime. The configuration and action runtime are exposed only
-through read-only access, so callers cannot bypass cadence or ammo accounting.
+Weapon definitions can be shared. `state()` returns a value snapshot. The
+mechanism owns its action runtime and enforces cadence and ammo accounting.
 
 ## Trigger input
 
@@ -67,6 +66,24 @@ Optional reload actions now top up loaded ammo from an `AmmunitionSource`, with
 transfer only at completion. See [the reload contract](reloading.md). There is no
 mutable loaded-ammo setter or implicit infinite reserve.
 
+## Projectile groups
+
+Set `FiringDefinition::projectiles_per_shot` to a positive count. It defaults
+to one. For example, configure `projectiles_per_shot = 8` and
+`rounds_per_shot = 1` for an eight-pellet shot that costs one round. Each shot
+emits one `ShotFiredEvent`, carrying the count in `projectile_count`. The
+fire mode, cooldown and reload still operate per shot.
+
+`FiringMechanism::set_projectiles_per_shot` changes the count used by the next
+emitted shot. Use `projectiles_per_shot()` to read the current count. The
+initial setting is available through `definition()`. Already emitted events
+retain their count.
+
+The range accepts an integer from 1 to 64 in each firearm's `.weapon` file.
+Press F5 to apply the value. The range launches the group from the same
+muzzle, samples each direction independently and tracks hits per projectile.
+Its accuracy is hits divided by projectiles launched.
+
 ## Events and integration
 
 Commands and updates return an ordered `std::vector<FiringEvent>`. Each item is
@@ -75,15 +92,14 @@ one of:
 | Event | Purpose |
 | --- | --- |
 | `WeaponEvent` | Existing action lifecycle transitions |
-| `ShotFiredEvent` | One shot request with action ID, time, cost and remaining rounds |
+| `ShotFiredEvent` | One shot request with action ID, time, projectile count, cost and remaining rounds |
 | `DryFireEvent` | One eligible attempt with insufficient rounds |
 | `ReloadEvent` | Reload start, completion/transfer, or cancellation |
 
 At activation, `PhaseEntered(Active)` precedes `ShotFiredEvent`. Recovery and
 completion follow. Even completely instant actions preserve this order. Use
 `ShotFiredEvent` to spawn the shot; consuming the active-phase event as another
-shot would double-fire. A single shot event may create multiple pellets/projectiles
-according to the game's shot definition; rounds per shot specifies ammo cost.
+shot would double-fire. The host can spawn every projectile using the event's count.
 
 `advance()` processes every crossed phase and eligible automatic shot, including
 a shot exactly at the end of the update. Calling `advance(0)` does not repeat that
